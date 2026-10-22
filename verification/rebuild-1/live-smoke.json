@@ -1,0 +1,17 @@
+{
+  "BTC-USDT": {
+    "bars": 512,
+    "last_close": 1792673400000,
+    "price": 81686.7
+  },
+  "ETH-USDT": {
+    "bars": 512,
+    "last_close": 1792673400000,
+    "price": 2402.17
+  },
+  "SOL-USDT": {
+    "bars": 512,
+    "last_close": 1792673400000,
+    "price": 104.26
+  }
+}

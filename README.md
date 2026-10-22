@@ -2,7 +2,9 @@
 
 Windows observer-only companion for BTC/ETH/SOL perpetuals. All strategy entries are paper simulations. It cannot place exchange orders.
 
-This repository restores the updated 0.2.3 source, including the scrolling and hide-chart fix. The Windows rebuild is pending; a successful build publishes the full setup and smaller updater under [Releases](https://github.com/tpzcb9fr24-cell/blofin3/releases).
+**0.2.3 Windows rebuild published:** [Download the smaller updater (~143 MB)](https://github.com/tpzcb9fr24-cell/blofin3/releases/download/observer-1/BloFinObserver-Update.exe), or [full setup (~1.1 GB)](https://github.com/tpzcb9fr24-cell/blofin3/releases/download/observer-1/BloFinObserver-Setup.exe).
+
+The [Windows verification workflow](https://github.com/tpzcb9fr24-cell/blofin3/actions/runs/39780896692) passed the unit, layout, live feed, genuine model, frozen-app, installed-app and updater preservation checks. This rebuild includes the scrolling and hide-chart fix. [Verification details](REBUILD_VERIFICATION.md).
 
 Existing installations can use the smaller updater after closing the companion. It retains model weights and the local journal. No end-user Python installation or CSV upload is required.
 
