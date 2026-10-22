@@ -1,0 +1,36 @@
+{
+  "Kronos": {
+    "values": [
+      83403.8984375,
+      83399.609375,
+      83326.21875,
+      83402.1640625,
+      83343.5234375,
+      83323.25
+    ],
+    "asof": 1792590300000,
+    "checkpoint": "NeoQuasar/Kronos-small",
+    "seed": 42,
+    "context": 512,
+    "horizon": 6,
+    "interval_ms": 300000,
+    "latency_seconds": 2.97550253899999
+  },
+  "TimesFM": {
+    "values": [
+      83619.3671875,
+      83605.3046875,
+      83602.9296875,
+      83599.125,
+      83591.28125,
+      83586.421875
+    ],
+    "asof": 1792590300000,
+    "checkpoint": "google/timesfm-2.5-200m-pytorch",
+    "seed": null,
+    "context": 512,
+    "horizon": 6,
+    "interval_ms": 300000,
+    "latency_seconds": 1.408694899000011
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "transport": "Windows native HTTPS/WebSocket (system proxy)",
+  "platform": "win32",
+  "history": {
+    "BTC-USDT": {
+      "bars": 512,
+      "last_confirmed": 1792601400000,
+      "bid": 84509.6,
+      "ask": 84510.0
+    },
+    "ETH-USDT": {
+      "bars": 512,
+      "last_confirmed": 1792601400000,
+      "bid": 2511.09,
+      "ask": 2511.12
+    },
+    "SOL-USDT": {
+      "bars": 512,
+      "last_confirmed": 1792601400000,
+      "bid": 108.25,
+      "ask": 108.26
+    }
+  },
+  "websocket_updates": {
+    "BTC-USDT": 2,
+    "ETH-USDT": 2,
+    "SOL-USDT": 2
+  },
+  "elapsed_s": 3.3589999999999236
+}

@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+model-assets/
+vendor/
+src/model/
+build/
+dist/
+installer-output/
+*.spec
+*-smoke.json

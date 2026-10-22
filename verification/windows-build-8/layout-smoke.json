@@ -1,0 +1,23 @@
+[
+  {
+    "window": "1024x640",
+    "relative_scale": 1.0,
+    "journal_height": 302,
+    "bottom_reachable": true,
+    "chart_toggle": true
+  },
+  {
+    "window": "1024x640",
+    "relative_scale": 1.5,
+    "journal_height": 302,
+    "bottom_reachable": true,
+    "chart_toggle": true
+  },
+  {
+    "window": "1024x640",
+    "relative_scale": 2.0,
+    "journal_height": 302,
+    "bottom_reachable": true,
+    "chart_toggle": true
+  }
+]

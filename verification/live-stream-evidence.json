@@ -1,0 +1,45 @@
+{
+  "started_ms": 1792590199416,
+  "symbols": {
+    "BTC-USDT": {
+      "history_count": 512,
+      "initial_confirmed": 1792590000000,
+      "reconnected_confirmed": 1792590300000
+    },
+    "ETH-USDT": {
+      "history_count": 512,
+      "initial_confirmed": 1792590000000,
+      "reconnected_confirmed": 1792590300000
+    },
+    "SOL-USDT": {
+      "history_count": 512,
+      "initial_confirmed": 1792590000000,
+      "reconnected_confirmed": 1792590300000
+    }
+  },
+  "websocket": {
+    "ETH-USDT": {
+      "updates": 79,
+      "first_price": 2462.67,
+      "last_price": 2464.13,
+      "last_open": 1792590000000,
+      "new_closed_end": 1792590300000
+    },
+    "BTC-USDT": {
+      "updates": 79,
+      "first_price": 83551.2,
+      "last_price": 83623.1,
+      "last_open": 1792590300000,
+      "new_closed_end": 1792590300000
+    },
+    "SOL-USDT": {
+      "updates": 79,
+      "first_price": 106.52,
+      "last_price": 106.65,
+      "last_open": 1792590300000,
+      "new_closed_end": 1792590300000
+    }
+  },
+  "closed_advance": true,
+  "duration_s": 102.82157359299993
+}

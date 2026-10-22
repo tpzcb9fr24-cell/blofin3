@@ -1,0 +1,110 @@
+{
+  "platform": "Linux-6.18.55-x86_64-with-glibc2.39",
+  "elapsed_s": 31.829826081999954,
+  "live_symbols": [
+    "BTC-USDT",
+    "ETH-USDT",
+    "SOL-USDT"
+  ],
+  "model_forecasts": {
+    "('BTC-USDT', 'Kronos')": {
+      "values": [
+        83794.0234375,
+        83656.9296875,
+        83580.2265625,
+        83545.375,
+        83468.8515625,
+        83432.109375
+      ],
+      "asof": 1792590600000,
+      "checkpoint": "NeoQuasar/Kronos-small",
+      "seed": 42,
+      "context": 512,
+      "horizon": 6,
+      "interval_ms": 300000
+    },
+    "('BTC-USDT', 'TimesFM')": {
+      "values": [
+        83777.6640625,
+        83750.890625,
+        83715.578125,
+        83681.5859375,
+        83661.1484375,
+        83654.484375
+      ],
+      "asof": 1792590600000,
+      "checkpoint": "google/timesfm-2.5-200m-pytorch",
+      "seed": null,
+      "context": 512,
+      "horizon": 6,
+      "interval_ms": 300000
+    },
+    "('ETH-USDT', 'Kronos')": {
+      "values": [
+        2465.51025390625,
+        2465.4873046875,
+        2465.67724609375,
+        2467.3408203125,
+        2465.206298828125,
+        2464.526611328125
+      ],
+      "asof": 1792590600000,
+      "checkpoint": "NeoQuasar/Kronos-small",
+      "seed": 42,
+      "context": 512,
+      "horizon": 6,
+      "interval_ms": 300000
+    },
+    "('ETH-USDT', 'TimesFM')": {
+      "values": [
+        2471.791259765625,
+        2470.85009765625,
+        2470.642578125,
+        2470.19287109375,
+        2470.007568359375,
+        2469.660400390625
+      ],
+      "asof": 1792590600000,
+      "checkpoint": "google/timesfm-2.5-200m-pytorch",
+      "seed": null,
+      "context": 512,
+      "horizon": 6,
+      "interval_ms": 300000
+    },
+    "('SOL-USDT', 'Kronos')": {
+      "values": [
+        106.82755279541016,
+        106.86835479736328,
+        106.7258529663086,
+        106.6535415649414,
+        106.76869201660156,
+        106.7348403930664
+      ],
+      "asof": 1792590600000,
+      "checkpoint": "NeoQuasar/Kronos-small",
+      "seed": 42,
+      "context": 512,
+      "horizon": 6,
+      "interval_ms": 300000
+    },
+    "('SOL-USDT', 'TimesFM')": {
+      "values": [
+        106.89555358886719,
+        106.88391876220703,
+        106.86719512939453,
+        106.85128021240234,
+        106.85297393798828,
+        106.8505630493164
+      ],
+      "asof": 1792590600000,
+      "checkpoint": "google/timesfm-2.5-200m-pytorch",
+      "seed": null,
+      "context": 512,
+      "horizon": 6,
+      "interval_ms": 300000
+    }
+  },
+  "manual_recorded": true,
+  "live_updates_advanced": true,
+  "journal_survived_restart": true
+}

@@ -1,0 +1,143 @@
+name: Build and verify Windows observer installer
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+  actions: write
+concurrency:
+  group: blofin-observer-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  supersede:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Stop obsolete observer builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          CURRENT_RUN: ${{ github.run_id }}
+        run: |
+          gh api "repos/$REPOSITORY/actions/workflows/windows-installer.yml/runs?per_page=30" > runs.json
+          jq -r --argjson current "$CURRENT_RUN" '.workflow_runs[] | select(.id < $current and (.status == "queued" or .status == "in_progress")) | .id' runs.json > obsolete.txt
+          while read -r run_id; do
+            gh api --method POST "repos/$REPOSITORY/actions/runs/$run_id/cancel" || true
+          done < obsolete.txt
+  build:
+    needs: supersede
+    runs-on: windows-2022
+    timeout-minutes: 60
+    env:
+      PYTHONPATH: src
+      HF_HUB_DISABLE_SYMLINKS_WARNING: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify native Windows REST and WebSocket
+        timeout-minutes: 3
+        run: python -m strategy_lab.network_probe
+      - name: Install bundled CPU runtime and build tools
+        run: |
+          python -m pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r requirements-build.txt
+      - name: Unit and architecture checks
+        run: |
+          python -m pytest -q
+          python -m strategy_lab --self-test
+      - name: Prepare genuine checkpoints and source manifest
+        run: python scripts/prepare_models.py
+      - name: Real market and genuine model smoke tests
+        run: |
+          python -m strategy_lab --live-smoke
+          python -m strategy_lab --model-smoke
+      - name: Compile complete bundled application
+        run: >-
+          python -m PyInstaller --noconfirm --clean --windowed --onedir
+          --name BloFinObserver --paths src --collect-all timesfm
+          --collect-all model --collect-all huggingface_hub --collect-all einops --collect-all safetensors
+          --copy-metadata timesfm --copy-metadata torch --copy-metadata huggingface_hub --copy-metadata safetensors
+          --add-data "model-assets;model-assets" src/strategy_lab/__main__.py
+      - name: Frozen app GUI and offline model validation
+        shell: pwsh
+        run: |
+          $env:HF_HUB_OFFLINE = '1'
+          foreach ($flag in @('--self-test', '--network-smoke', '--model-smoke', '--live-smoke')) {
+            $process = Start-Process dist/BloFinObserver/BloFinObserver.exe -ArgumentList $flag -PassThru
+            if (!$process.WaitForExit(180000)) { $process.Kill(); throw "Frozen test timed out: $flag" }
+            if ($process.ExitCode -ne 0) { throw "Frozen test failed: $flag" }
+          }
+      - name: Compile conventional installer
+        shell: pwsh
+        run: |
+          $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          if (!(Test-Path $iscc)) { choco install innosetup --yes --no-progress }
+          & $iscc windows/installer.iss
+          if ($LASTEXITCODE -ne 0) { throw 'Installer compilation failed' }
+      - name: Build smaller updater retaining installed model weights
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist-update | Out-Null
+          Copy-Item dist/BloFinObserver dist-update/BloFinObserver -Recurse
+          Remove-Item dist-update/BloFinObserver/_internal/model-assets -Recurse -Force
+          & 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' /DUpdateOnly=1 windows/installer.iss
+          if ($LASTEXITCODE -ne 0) { throw 'Updater compilation failed' }
+      - name: Install, launch and exercise installed binary
+        shell: pwsh
+        run: |
+          $install = Join-Path $env:RUNNER_TEMP 'BloFinInstalled'
+          $p = Start-Process installer-output/BloFinObserver-Setup.exe -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=$install") -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw 'Installation failed' }
+          foreach ($flag in @('--self-test', '--network-smoke', '--model-smoke', '--live-smoke', '--acceptance-smoke')) {
+            $p = Start-Process "$install/BloFinObserver.exe" -ArgumentList $flag -PassThru
+            if (!$p.WaitForExit(180000)) { $p.Kill(); throw "Installed test timed out: $flag" }
+            if ($p.ExitCode -ne 0) { throw "Installed test failed: $flag" }
+          }
+          Get-FileHash installer-output/BloFinObserver-Setup.exe -Algorithm SHA256 | Format-List | Out-File installer-output/SHA256.txt
+      - name: Apply updater to fresh baseline and verify retained models and journal
+        shell: pwsh
+        run: |
+          $previous = Resolve-Path 'installer-output/BloFinObserver-Setup.exe'
+          $upgrade = Join-Path $env:RUNNER_TEMP 'BloFinUpgradeTest'
+          $p = Start-Process $previous -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/DIR=$upgrade") -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw 'Baseline installation failed' }
+          $model = Join-Path $upgrade '_internal/model-assets/timesfm/model.safetensors'
+          $before = (Get-FileHash $model -Algorithm SHA256).Hash
+          python -c "from strategy_lab.store import Store; from pathlib import Path; import os; s=Store(Path(os.environ['LOCALAPPDATA'])/'BloFinObserver'/'observer.sqlite3'); s.open_trade('Alyssa manual','BTC-USDT','long',1000,100,99,102,'Updater retention probe','manual',2); s.close()"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not seed retention journal' }
+          $journal = Join-Path $env:LOCALAPPDATA 'BloFinObserver/observer.sqlite3'
+          $journalBefore = (Get-FileHash $journal -Algorithm SHA256).Hash
+          $p = Start-Process installer-output/BloFinObserver-Update.exe -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/DIR=$upgrade") -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw 'Update installation failed' }
+          if ((Get-FileHash $model -Algorithm SHA256).Hash -ne $before) { throw 'Updater modified model weights' }
+          if ((Get-FileHash $journal -Algorithm SHA256).Hash -ne $journalBefore) { throw 'Updater modified journal' }
+          $env:HF_HUB_OFFLINE = '1'
+          foreach ($flag in @('--self-test','--network-smoke','--model-smoke','--acceptance-smoke')) {
+            $p = Start-Process "$upgrade/BloFinObserver.exe" -ArgumentList $flag -PassThru
+            if (!$p.WaitForExit(180000)) { $p.Kill(); throw "Upgraded test timed out: $flag" }
+            if ($p.ExitCode -ne 0) { throw "Upgraded test failed: $flag" }
+          }
+          Get-FileHash installer-output/*.exe -Algorithm SHA256 | Format-List | Out-File installer-output/SHA256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BloFinObserver-Windows-Installer
+          path: installer-output/*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Verification-Evidence
+          path: |
+            *-smoke.json
+            startup-error.log
+            model-assets/manifest.json
+      - name: Publish tested installer as prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $tag = "observer-${{ github.run_number }}"
+          gh release create $tag installer-output/* --target '${{ github.sha }}' --prerelease --title "BloFin Observer build ${{ github.run_number }}" --notes 'Display layout update (0.2.3): whole-window scrolling, hide/show chart, and horizontal/vertical table scrollbars. Small-window layout, public data, genuine models and installed-app checks passed on Windows Server 2022. Interactive Windows 11 layout acceptance and annotated SMC validation remain outstanding.'
