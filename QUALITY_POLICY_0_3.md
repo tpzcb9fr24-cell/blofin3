@@ -22,8 +22,12 @@ Genuine Kronos and TimesFM support session-aware inputs and future target timest
 
 ## Validation and limitations
 
-The local suite passes 53 tests with one Windows-only protected-key test skipped on Linux. Actual Tk small-window, journal dollar-column, key-dialog, settings-dialog and manual partial-exit/restart checks pass. The Windows build must additionally pass the protected-key test, genuine crypto feed/model checks, synthetic ETF-input real inference, frozen-app and installed/updater tests before publishing.
+The local suite passes 56 tests with one Windows-only protected-key test skipped on Linux. Actual Tk small-window, journal dollar-column, key-dialog, settings-dialog and manual partial-exit/restart checks pass. Windows build observer-6 passed all 57 tests, including protected-key storage, genuine crypto feed/model checks, synthetic ETF-input real inference, frozen GUI, installed desktop and updater tests. The installed/upgraded desktop check observed all three crypto feeds advancing, six model forecasts and manual-journal persistence. The updater retained journal and model hashes. These checks ran on Windows Server 2022, not an interactive Windows 11 desktop.
 
 There is no demonstrated profitability improvement, out-of-sample edge or calibrated forecast confidence. These new thresholds and budgets are engineering hypotheses, not optimized recommendations. Funding, ETF borrow/locate costs, dividends, tax and leverage are excluded. Existing normalized metrics may mix policies only when All policies is selected; the new paper-account tab excludes legacy rows. Annotated SMC/TP agreement and interactive Windows 11 acceptance remain outstanding. Re-run those gates before treating this as a validated trading strategy.
 
 Official references: [Twelve Data](https://twelvedata.com/docs), [U.S. equities data](https://support.twelvedata.com/en/articles/5195429-pre-post-market-data), [exchange_calendars](https://github.com/gerrymanoim/exchange_calendars).
+
+## Verified download
+
+[0.3.0 release](https://github.com/tpzcb9fr24-cell/blofin3/releases/tag/observer-6), source `054b106cfe8a4be0eaa0cbbaea008aa6dfba150f`, [successful Windows run](https://github.com/tpzcb9fr24-cell/blofin3/actions/runs/40014409201). Updater SHA256: `d13768bb3278b9591bc8657340113b73d15a23e036295478b56ec6a58eee2f73`. Full installer SHA256: `7f2dc46b1d4d95df49b5a1117050daca27083c6f83a713228319592daf7304d1`.
