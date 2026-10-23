@@ -3,7 +3,7 @@ import json
 import sys
 import time
 from pathlib import Path
-from .market import SYMBOLS,history,contiguous,parse_candle,quote
+from .market import CRYPTO_SYMBOLS as SYMBOLS,history,contiguous,parse_candle,quote
 from .transport import public_socket,transport_name
 
 

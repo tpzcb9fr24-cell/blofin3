@@ -33,14 +33,16 @@ class Models:
             self.timesfm=timesfm.TimesFM_2p5_200M_torch.from_pretrained(str(root/'timesfm'),torch_compile=False,local_files_only=True)
             self.timesfm.compile(timesfm.ForecastConfig(max_context=512,max_horizon=32,normalize_inputs=True))
 
-    def predict(self,name,bars,horizon=6):
+    def predict(self,name,bars,horizon=6,symbol=None):
         import numpy as np
         import pandas as pd
         import torch
         from .market import contiguous
-        if len(bars)<60 or not contiguous(bars) or any(not c.confirmed for c in bars):
+        if len(bars)<60 or not contiguous(bars,symbol) or any(not c.confirmed for c in bars):
             raise ValueError('Model needs contiguous confirmed bars')
         bars=bars[-512:]
+        from .instruments import future_times,ETF_SYMBOLS
+        targets=future_times(symbol,bars[-1].time,horizon)
         started=time.monotonic()
         self.load(name)
         with torch.inference_mode():
@@ -48,7 +50,7 @@ class Models:
                 torch.manual_seed(42)
                 df=pd.DataFrame([{k:getattr(c,k) for k in ('open','high','low','close','volume','amount')} for c in bars])
                 timestamps=pd.Series(pd.to_datetime([c.time for c in bars],unit='ms'))
-                future=pd.Series(pd.to_datetime([bars[-1].time+(i+1)*300000 for i in range(horizon)],unit='ms'))
+                future=pd.Series(pd.to_datetime(targets,unit='ms'))
                 output=self.kronos.predict(df=df,x_timestamp=timestamps,y_timestamp=future,
                                            pred_len=horizon,T=1.0,top_p=.9,sample_count=1,verbose=False)
                 values=[float(x) for x in output['close']]
@@ -62,7 +64,7 @@ class Models:
         if len(values)!=horizon or not all(math.isfinite(x) and x>0 for x in values):
             raise ValueError('Invalid model forecast')
         return {'values':values,'asof':bars[-1].end,'checkpoint':checkpoint,'seed':42 if name=='Kronos' else None,
-                'context':len(bars),'horizon':horizon,'interval_ms':300000,'created_ms':int(time.time()*1000),'latency_s':time.monotonic()-started}
+                'target_times':targets,'time_basis':'regular-session bars; amount=close*share volume proxy' if symbol in ETF_SYMBOLS else 'UTC continuous five-minute bars','context':len(bars),'horizon':horizon,'interval_ms':300000,'created_ms':int(time.time()*1000),'latency_s':time.monotonic()-started}
 
 
 def agrees(forecast,side,entry,asof):

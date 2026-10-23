@@ -26,7 +26,7 @@ class Store:
         self.db.row_factory=sqlite3.Row
         self.db.executescript(SCHEMA)
         columns={row['name'] for row in self.db.execute('PRAGMA table_info(trades)')}
-        for name,definition in [('quantity','REAL DEFAULT 1'),('remaining','REAL DEFAULT 1'),('realized','REAL DEFAULT 0'),('cost_pct','REAL DEFAULT 0.0015')]:
+        for name,definition in [('quantity','REAL DEFAULT 1'),('remaining','REAL DEFAULT 1'),('realized','REAL DEFAULT 0'),('cost_pct','REAL DEFAULT 0.0015'),('policy',"TEXT DEFAULT 'legacy-v1'"),('setup_key',"TEXT DEFAULT ''")]:
             if name not in columns:
                 self.db.execute('ALTER TABLE trades ADD COLUMN '+name+' '+definition)
         self.db.execute('CREATE TABLE IF NOT EXISTS manual_exits(id INTEGER PRIMARY KEY,trade_id INTEGER,time INTEGER,price REAL,quantity REAL,fee_fraction REAL)')
@@ -51,7 +51,7 @@ class Store:
         with self.db:
             self.db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',(key,json.dumps(value)))
 
-    def open_trade(self,track,symbol,side,opened,entry,stop,target,reason,source='paper',quantity=1,cost_pct=.0015):
+    def open_trade(self,track,symbol,side,opened,entry,stop,target,reason,source='paper',quantity=1,cost_pct=.0015,policy='legacy-v1',setup_key=''):
         if not math.isfinite(cost_pct) or not 0<=cost_pct<1:
             raise ValueError('Invalid entry cost estimate')
         if not math.isfinite(quantity) or quantity<=0:
@@ -63,8 +63,8 @@ class Store:
         if self.db.execute('SELECT 1 FROM trades WHERE track=? AND symbol=? AND closed IS NULL',(track,symbol)).fetchone():
             return None
         with self.db:
-            cur=self.db.execute('INSERT OR IGNORE INTO trades(track,symbol,side,opened,entry,stop,target,reason,source,quantity,remaining,cost_pct) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
-                                (track,symbol,side,opened,entry,stop,target,reason,source,quantity,quantity,cost_pct))
+            cur=self.db.execute('INSERT OR IGNORE INTO trades(track,symbol,side,opened,entry,stop,target,reason,source,quantity,remaining,cost_pct,policy,setup_key) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                                (track,symbol,side,opened,entry,stop,target,reason,source,quantity,quantity,cost_pct,policy if source=='paper' else 'manual',setup_key))
         return cur.lastrowid if cur.rowcount else None
 
     def close_trade(self,id,price,closed,reason,fees=0):
@@ -161,7 +161,7 @@ class Store:
 def net_return(trade,price):
     direction=1 if trade['side']=='long' else -1
     if 'remaining' in trade:
-        return trade['realized'] + direction*(price/trade['entry']-1)*trade['remaining']/trade['quantity']-trade['fees']
+        return trade['realized'] + direction*(price/trade['entry']-1)*trade['remaining']/trade['quantity']-trade['fees']-(trade.get('cost_pct',0)*trade['remaining']/trade['quantity'] if trade['source']=='paper' and trade['closed'] is None else 0)
     return direction*(price/trade['entry']-1)-trade['fees']
 
 

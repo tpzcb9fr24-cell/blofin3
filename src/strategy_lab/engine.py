@@ -3,8 +3,9 @@ import json
 import queue
 import threading
 import time
+from pathlib import Path
 from dataclasses import asdict
-from .market import SYMBOLS, Candle, history, public_get, parse_candle, contiguous, quote
+from .market import SYMBOLS,CRYPTO_SYMBOLS,ETF_SYMBOLS, Candle, history, public_get, parse_candle, contiguous, quote
 from .strategies import Settings, detect
 from .store import Store
 from .models import Models, agrees
@@ -14,10 +15,11 @@ TRACKS=tuple(name+suffix for name in ('SMC Trendline','SMC EMA50') for suffix in
 
 class Engine:
     def __init__(self,path,events):
-        self.path=path;self.events=events;self.stop=threading.Event();self.inbox=queue.Queue()
-        self.model_jobs={name:queue.Queue(maxsize=3) for name in ('Kronos','TimesFM')};self.model_results=queue.Queue();self.model_pending=set()
+        self.path=Path(path);self.events=events;self.stop=threading.Event();self.inbox=queue.Queue()
+        self.model_jobs={name:queue.Queue(maxsize=10) for name in ('Kronos','TimesFM')};self.model_results=queue.Queue();self.model_pending=set()
         self.bars={s:{} for s in SYMBOLS};self.last={};self.forecasts={};self.pending={}
         self.last_received={};self.quotes={};self.zones={};self.threads=[];self.active_socket=None;self.streaming=False;self.blocked_until={}
+        self.stock_next={};self.feed_status={};self.key_path=self.path.parent/'market-data.key'
 
     def start(self):
         for target in (self.run,self.stream,lambda:self.infer('Kronos'),lambda:self.infer('TimesFM')):
@@ -30,7 +32,7 @@ class Engine:
         while not self.stop.is_set():
             try:
                 ws=public_socket(timeout=12);self.active_socket=ws;self.streaming=True
-                ws.send(json.dumps({'op':'subscribe','args':[{'channel':'candle5m','instId':s} for s in SYMBOLS]}))
+                ws.send(json.dumps({'op':'subscribe','args':[{'channel':'candle5m','instId':s} for s in CRYPTO_SYMBOLS]}))
                 self.emit('transport',message='Live public WebSocket connected | '+transport_name())
                 last_ping=time.monotonic()
                 while not self.stop.is_set():
@@ -42,7 +44,7 @@ class Engine:
                     msg=json.loads(raw)
                     if msg.get('event')=='error': raise RuntimeError(str(msg))
                     symbol=msg.get('arg',{}).get('instId')
-                    if symbol in SYMBOLS:
+                    if symbol in CRYPTO_SYMBOLS:
                         valid=[]
                         for row in msg.get('data',[]):
                             try:valid.append(parse_candle(row))
@@ -74,7 +76,7 @@ class Engine:
             try:symbol,name,bars=self.model_jobs[worker_name].get(timeout=1)
             except queue.Empty:continue
             try:
-                value=models.predict(name,bars)
+                value=models.predict(name,bars,symbol=symbol)
                 self.model_results.put((symbol,name,bars[-1].end,value,None))
             except Exception as exc:
                 self.model_results.put((symbol,name,bars[-1].end,None,str(exc)))
@@ -105,14 +107,14 @@ class Engine:
             if c.end>previous:self.paper_exits(store,symbol,c)
         self.paper_exits(store,symbol,ordered[-1])
         self.last[symbol]=max(previous,closed[-1].end)
-        _,detected,_=detect(closed,self.settings)
+        _,detected,_=detect(closed,self.settings,symbol=symbol)
         self.zones[symbol]=store.sync_zones(symbol,detected,ordered,now)
-        signals,blocks,notes=detect(closed,self.settings,self.zones[symbol])
+        signals,blocks,notes=detect(closed,self.settings,self.zones[symbol],symbol=symbol)
         store.save_decision(symbol,closed[-1].end,{'signals':[asdict(s) for s in signals],'blocks':[asdict(b) for b in blocks],'notes':notes,'settings':asdict(self.settings)})
         self.emit('analysis',symbol=symbol,signals=signals,blocks=blocks,notes=notes)
         # Never backfill historical strategy entries, or enter stale recovered signals.
-        fresh=0<=now-closed[-1].end<90_000 and contiguous(closed)
-        if not contiguous(closed) or now-closed[-1].end>600000:return
+        fresh=0<=now-closed[-1].end<90_000 and contiguous(closed,symbol)
+        if not contiguous(closed,symbol) or now-closed[-1].end>600000:return
         asof=closed[-1].end
         key=(symbol,asof)
         if key not in self.pending:
@@ -132,6 +134,8 @@ class Engine:
     def entries(self,store,symbol,asof):
         pending=self.pending.get((symbol,asof))
         if not pending or time.time()*1000-asof>90_000:return
+        from .instruments import market_open
+        if symbol in ETF_SYMBOLS and not market_open(symbol,int(time.time()*1000)):return
         signals=pending['signals']; smc=[s for s in signals if s.strategy.startswith('SMC')]
         for s in signals:
             tracks=[s.strategy]
@@ -150,29 +154,42 @@ class Engine:
                 try:
                     live_quote=self.quotes.get(symbol)
                     if not live_quote or time.time()*1000-live_quote['time']>1000:
-                        live_quote=quote(symbol);self.quotes[symbol]=live_quote
-                    if not 0<=time.time()*1000-live_quote['time']<15000:
+                        if symbol in ETF_SYMBOLS:
+                            from .stocks import load_key,quote as stock_quote
+                            live_quote=stock_quote(symbol,load_key(self.key_path))
+                        else:live_quote=quote(symbol)
+                        self.quotes[symbol]=live_quote
+                    if not 0<=time.time()*1000-live_quote['time']<(90000 if symbol in ETF_SYMBOLS else 15000):
                         raise ValueError('Stale bid/ask')
                 except Exception as exc:
                     self.emit('error',message='Paper entry skipped: no fresh bid/ask: '+str(exc))
                     pending['entered'].add(track)
                     continue
                 # Cross displayed spread; residual slippage is included in cost_pct.
-                price=live_quote['ask'] if s.side=='long' else live_quote['bid']
+                price=live_quote['price'] if symbol in ETF_SYMBOLS else live_quote['ask'] if s.side=='long' else live_quote['bid']
                 cfg=self.settings
-                stop=price*(1-cfg.stop_pct if s.side=='long' else 1+cfg.stop_pct)
                 from .targets import choose_target
                 closed=[c for c in sorted(self.bars[symbol].values(),key=lambda c:c.time) if c.confirmed]
-                _,blocks,_=detect(closed,cfg,self.zones.get(symbol,()))
+                _,blocks,_=detect(closed,cfg,self.zones.get(symbol,()),symbol=symbol)
                 # Invalidate using the current incomplete candle's wick as well.
                 current=max(self.bars[symbol].values(),key=lambda c:c.time)
                 from .targets import OrderBlock
                 blocks=[OrderBlock(b.low,b.high,b.kind,b.formed_at,
                            current.time if (b.kind=='bullish' and current.low<b.low) or (b.kind=='bearish' and current.high>b.high) else b.invalidated_at) for b in blocks]
-                decision=choose_target(entry=price,stop=stop,side=s.side,blocks=blocks,as_of=int(time.time()*1000),desired_rr=cfg.rr,buffer_pct=cfg.buffer_pct,roundtrip_cost_pct=cfg.cost_pct)
+                from .risk import structural_stop,size_entry,POLICY
+                stop=structural_stop(closed,s.side,price,cfg) if cfg.quality_policy else price*(1-cfg.stop_pct if s.side=='long' else 1+cfg.stop_pct)
+                if stop is None:
+                    self.emit('risk',message=track+' '+symbol+': no valid structure stop within maximum distance')
+                    pending['entered'].add(track);continue
+                cost=cfg.equity_cost_pct if symbol in ETF_SYMBOLS else cfg.cost_pct
+                decision=choose_target(entry=price,stop=stop,side=s.side,blocks=blocks,as_of=int(time.time()*1000),desired_rr=cfg.rr,buffer_pct=cfg.buffer_pct,roundtrip_cost_pct=cost,min_net_rr=cfg.min_net_rr if cfg.quality_policy else 0)
                 if decision.accepted:
+                    quantity,note=size_entry(store.trades(),track,symbol,s.side,price,stop,cost,int(time.time()*1000),cfg) if cfg.quality_policy else (1,'legacy size')
+                    if quantity is None:
+                        self.emit('risk',message=track+' '+symbol+': skipped: '+note)
+                        pending['entered'].add(track);continue
                     store.open_trade(track,symbol,s.side,int(time.time()*1000),price,stop,decision.target,
-                                     s.reason+'; estimated bid/ask fill '+json.dumps(live_quote)+'; TP evidence '+json.dumps(asdict(decision))+'; model gating as-of '+str(asof),cost_pct=cfg.cost_pct)
+                                     s.reason+'; '+note+'; indicative fill '+json.dumps(live_quote)+'; TP evidence '+json.dumps(asdict(decision))+'; model gating as-of '+str(asof),cost_pct=cost,quantity=quantity,policy=POLICY if cfg.quality_policy else 'legacy-v1',setup_key=f'{symbol}:{asof}:{s.side}')
                 pending['entered'].add(track)
 
     def paper_exits(self,store,symbol,c):
@@ -202,7 +219,7 @@ class Engine:
             try:
                 if time.monotonic()>=next_poll:
                     self.settings=Settings(**store.setting('strategy',{})).validate()
-                    for symbol in SYMBOLS:
+                    for symbol in CRYPTO_SYMBOLS:
                         if time.time()<self.blocked_until.get(symbol,0):continue
                         try:
                             new=history(symbol) if not self.bars[symbol] else public_get(symbol,100)
@@ -211,6 +228,20 @@ class Engine:
                             if getattr(exc,'status',None)==403:self.blocked_until[symbol]=time.time()+60
                             self.emit('error',message=symbol+': '+str(exc)[:450])
                     next_poll=time.monotonic()+(15 if self.streaming else 3)
+                from .stocks import load_key,history as stock_history,next_poll
+                for symbol in ETF_SYMBOLS:
+                    if time.time()<self.stock_next.get(symbol,0):continue
+                    try:
+                        key=load_key(self.key_path)
+                        if not key:raise ValueError('ETF DATA SETUP REQUIRED: Twelve Data market-data key')
+                        new=stock_history(symbol,key,512)
+                        self.update(store,symbol,new,not bool(self.bars[symbol]))
+                        self.stock_next[symbol]=next_poll(int(time.time()*1000))/1000
+                        self.feed_status[symbol]='Twelve Data 5m regular-session; indicative pricing'
+                    except Exception as exc:
+                        message=str(exc)
+                        if self.feed_status.get(symbol)!=message:self.emit('feed',symbol=symbol,message=symbol+': '+message)
+                        self.feed_status[symbol]=message;self.stock_next[symbol]=time.time()+60
                 for _ in range(100):
                     try:symbol,bars=self.inbox.get_nowait()
                     except queue.Empty:break

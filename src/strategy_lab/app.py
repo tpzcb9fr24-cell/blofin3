@@ -10,7 +10,7 @@ from pathlib import Path
 from tkinter import ttk, messagebox
 from dataclasses import asdict
 from .engine import Engine, TRACKS
-from .market import SYMBOLS
+from .market import SYMBOLS,ETF_SYMBOLS,CRYPTO_SYMBOLS
 from .store import Store, net_return
 from .strategies import Settings
 from .metrics import trade_metrics
@@ -27,6 +27,9 @@ def app_path():
     return Path(os.environ.get('LOCALAPPDATA',Path.home()))/'BloFinObserver'/'observer.sqlite3'
 
 
+def money(value,decimals=3):
+    return ('+' if value>=0 else '-')+f'${abs(value):,.{decimals}f}'
+
 def stamp(ms):
     return datetime.fromtimestamp(ms/1000,timezone.utc).strftime('%m-%d %H:%M:%S UTC')
 
@@ -39,7 +42,7 @@ class App(tk.Tk):
         self.minsize(640,480)
         self.configure(bg='#111827');self.path=path or app_path();self.store=Store(self.path)
         self.events=queue.Queue();self.engine=Engine(self.path,self.events)
-        self.market={};self.analysis={};self.models={};self.rows=[];self.received={};self.last_scores=0
+        self.market={};self.analysis={};self.models={};self.rows=[];self.received={};self.last_scores=0;self.feed_info={}
         style=ttk.Style(self);style.theme_use('clam')
         style.configure('.',font=('Segoe UI',10),background='#111827',foreground='#e5e7eb')
         style.configure('Treeview',background='#1f2937',fieldbackground='#1f2937',foreground='#e5e7eb',rowheight=27)
@@ -65,14 +68,15 @@ class App(tk.Tk):
         self.bind_all('<Button-4>',self.scroll_page,add='+')
         self.bind_all('<Button-5>',self.scroll_page,add='+')
         ttk.Label(self.content,text='ALYSSA  /  BLOFIN LIVE OBSERVER',font=('Segoe UI',20,'bold')).pack(anchor='w',padx=18,pady=(15,3))
-        ttk.Label(self.content,text='USDT PERPETUALS | OBSERVE ONLY | All strategy trades are paper simulations | Manual journal never submits an exchange order',foreground='#6ee7b7').pack(anchor='w',padx=18)
-        ttk.Label(self.content,text='SMC rules: explicit configurable interpretation; annotated-example validation outstanding. Model failures block model tracks.',foreground='#fbbf24').pack(anchor='w',padx=18,pady=4)
+        ttk.Label(self.content,text='CRYPTO PERPETUALS + SPY/QQQ ETFs | OBSERVE ONLY | All strategy trades are paper simulations | Manual journal never submits an exchange order',foreground='#6ee7b7').pack(anchor='w',padx=18)
+        ttk.Label(self.content,text='QUALITY-V2 EXPERIMENTAL: profitability unproven; SMC annotated-example validation outstanding. Missing/delayed ETF data blocks entries.',foreground='#fbbf24').pack(anchor='w',padx=18,pady=4)
         header=ttk.Frame(self.content);header.pack(fill='x',padx=18,pady=5)
         self.symbol=tk.StringVar(value=SYMBOLS[0]);box=ttk.Combobox(header,textvariable=self.symbol,values=SYMBOLS,state='readonly',width=14)
         box.pack(side='left');box.bind('<<ComboboxSelected>>',lambda e:(self.render_chart(),self.render_trades(self.rows)))
         self.prices=tk.StringVar(value='Connecting to BloFin public data...')
-        ttk.Label(header,textvariable=self.prices,font=('Segoe UI',12,'bold')).pack(side='left',padx=15)
+        ttk.Label(self.content,textvariable=self.prices,font=('Segoe UI',11,'bold'),wraplength=1320).pack(anchor='w',padx=18,pady=3)
         ttk.Button(header,text='Strategy settings / rules',command=self.settings_dialog).pack(side='right')
+        ttk.Button(header,text='SPY / QQQ data setup',command=self.stock_setup).pack(side='right',padx=6)
         self.chart_visible=True
         self.chart_toggle=ttk.Button(header,text='Hide chart / more journal space',command=self.toggle_chart)
         self.chart_toggle.pack(side='right',padx=6)
@@ -98,14 +102,24 @@ class App(tk.Tk):
         self.window=tk.StringVar(value='All time')
         choice=ttk.Combobox(filters,textvariable=self.window,values=('All time','Last 24 hours','Last 7 days'),state='readonly',width=18)
         choice.pack(side='left');choice.bind('<<ComboboxSelected>>',lambda e:self.render_trades(self.rows))
-        self.summary=self.table(compare,('track','closed','open','win','net','unrealized','net_R','expect_R','max_DD'),(260,65,65,70,110,110,85,85,90))
-        ttk.Label(compare,text='Returns use equal entry notional per trade; no leverage. Paper costs are configurable; funding excluded. Manual fees entered separately.').pack(anchor='w',padx=8,pady=5)
+        self.asset_scope=tk.StringVar(value='Chart symbol')
+        assets=ttk.Combobox(filters,textvariable=self.asset_scope,values=('Chart symbol','All markets')+SYMBOLS,state='readonly',width=15)
+        assets.pack(side='left',padx=8);assets.bind('<<ComboboxSelected>>',lambda e:self.render_trades(self.rows))
+        self.policy_filter=tk.StringVar(value='All policies')
+        policies=ttk.Combobox(filters,textvariable=self.policy_filter,values=('All policies','quality-v2','legacy-v1'),state='readonly',width=15)
+        policies.pack(side='left',padx=8);policies.bind('<<ComboboxSelected>>',lambda e:self.render_trades(self.rows))
+        self.summary=self.table(compare,('track','closed','open','win','avg_$per100','net','unrealized','profit_factor','net_R','expect_R','max_DD'),(260,65,65,70,140,100,110,100,85,85,90))
+        ttk.Label(compare,text='Avg $per100 = average closed net P/L per $100 of position value, not account growth. Open P/L estimates exit costs. Funding/ETF borrow excluded. Policies are filtered separately.').pack(anchor='w',padx=8,pady=5)
         self.manual_panel(journal)
-        self.trades=self.table(journal,('id','track','symbol','side','time','entry','stop','target','exit','net'),(45,190,100,65,165,95,95,95,95,90))
+        self.trades=self.table(journal,('id','track','symbol','side','time','net','$per100','entry','stop','target','exit','size','P/L_$','policy','setup_id'),(45,190,100,65,165,90,115,95,95,95,95,110,110,120,250))
         self.match=tk.StringVar(value='Select Alyssa’s journal row to compare nearest paper entries within +/-5 minutes for the same symbol.')
         ttk.Label(journal,textvariable=self.match,wraplength=1300).pack(anchor='w',pady=5)
         self.trades.bind('<<TreeviewSelect>>',self.show_match)
         self.log=tk.Text(audit,bg='#0b1220',fg='#d1d5db',height=8,state='disabled');self.log.pack(fill='both',expand=True)
+        accounts=ttk.Frame(notebook);notebook.add(accounts,text='Paper accounts / risk')
+        ttk.Label(accounts,text='QUALITY-V2 ONLY: independent $10,000 default paper accounts per strategy; never add these accounts together. All five symbols share each strategy account.',wraplength=1300).pack(anchor='w',pady=5)
+        self.account_table=self.table(accounts,('track','equity_$','open_P/L_$','marked_equity_$','$per100_account','open_risk_$','closed_DD_$','dollar_PF'),(260,150,150,170,180,140,140,100))
+        ttk.Label(accounts,text='Experimental defaults: 0.25% risk per entry, 1% total open risk, 0.5% per correlated group, 1% of initial equity UTC-day new-entry stop. Unlevered exposure. Gap losses can exceed budgets.\nLegacy trades are excluded from these new account balances. Fees/slippage are estimates; funding, ETF borrow/dividends excluded.',wraplength=1300).pack(anchor='w',pady=5)
         self.status=tk.StringVar(value='Starting...')
         self.status_label=ttk.Label(self.content,textvariable=self.status,wraplength=1400)
         self.status_label.pack(anchor='w',padx=18,pady=8)
@@ -134,7 +148,7 @@ class App(tk.Tk):
 
     def scroll_page(self,event):
         # Tables and text retain their own wheel behavior. Elsewhere scroll the whole page.
-        if isinstance(event.widget,(ttk.Treeview,tk.Text,ttk.Combobox)):
+        if event.widget.winfo_toplevel()!=self or isinstance(event.widget,(ttk.Treeview,tk.Text,ttk.Combobox)):
             return
         units=-1 if getattr(event,'num',None)==4 else 1 if getattr(event,'num',None)==5 else -int(event.delta/120) if abs(event.delta)>=120 else (-1 if event.delta>0 else 1)
         self.viewport.yview_scroll(units*3,'units')
@@ -175,7 +189,7 @@ class App(tk.Tk):
         frame=ttk.Frame(parent);frame.pack(fill='both',expand=True)
         frame.rowconfigure(0,weight=1);frame.columnconfigure(0,weight=1)
         tree=ttk.Treeview(frame,columns=columns,show='headings',height=8)
-        for c,w in zip(columns,widths):tree.heading(c,text=c.title());tree.column(c,width=w,minwidth=w,stretch=False)
+        for c,w in zip(columns,widths):tree.heading(c,text={'$per100':'$ P/L / $100','avg_$per100':'Avg $ P/L / $100','$per100_account':'$ P/L / $100 account'}.get(c,c.title()));tree.column(c,width=w,minwidth=w,stretch=False)
         vertical=ttk.Scrollbar(frame,orient='vertical',command=tree.yview)
         horizontal=ttk.Scrollbar(frame,orient='horizontal',command=tree.xview)
         tree.configure(yscrollcommand=vertical.set,xscrollcommand=horizontal.set)
@@ -261,33 +275,59 @@ class App(tk.Tk):
         selected=self.trades.selection()
         if not selected:return
         row=next((x for x in self.rows if x['id']==int(selected[0])),None)
-        if not row or row['source']!='manual':return
+        if not row:return
+        if row['source']=='paper':
+            key=row.get('setup_key','')
+            tracks=[x['track'] for x in self.rows if key and x.get('setup_key')==key]
+            self.match.set('Shared setup '+key+': '+', '.join(tracks) if key else 'Legacy row: no stored setup ID. Compare entry symbol, side, time and price; history has not been relabeled.')
+            return
         matches=self.store.comparison(row['symbol'],row['opened'])
         self.match.set('Same-symbol entries +/-5m: '+('; '.join(f'{k}: {v["side"]}, entry delta {(v["entry"]/row["entry"]-1)*100:+.3f}%, time delta {(v["opened"]-row["opened"])/1000:+.0f}s' for k,v in matches.items()) or 'No matching paper entry.'))
 
+    def stock_setup(self):
+        from .stocks import save_key
+        dialog=tk.Toplevel(self);dialog.title('SPY / QQQ market-data setup');dialog.geometry('650x360')
+        text=('SPY and QQQ use Twelve Data regular-session five-minute bars and indicative last-price entries. A provider key with the required ETF entitlement is needed.\n\n'
+              'Enter only a Twelve Data MARKET-DATA key here, not brokerage or exchange credentials. It stays encrypted for your Windows user. No orders can be sent.\n\n'
+              'ETF live access is not verified until data arrives. Missing, stale, delayed or denied data blocks new ETF entries. Quote fills are indicative, not executable bid/ask. Kronos uses a close × share-volume amount proxy; ETF forecasts are experimental.')
+        ttk.Label(dialog,text=text,wraplength=610).pack(padx=15,pady=12)
+        key=tk.StringVar();ttk.Entry(dialog,textvariable=key,show='*',width=65).pack(padx=15)
+        status=tk.StringVar(value='Provider: https://twelvedata.com — market-data account / API key')
+        ttk.Label(dialog,textvariable=status,wraplength=610).pack(padx=15,pady=8)
+        def save():
+            try:
+                save_key(self.path.parent/'market-data.key',key.get());key.set('');self.engine.stock_next.clear()
+                status.set('Saved locally. The worker will verify ETF access; check the connection log and symbol status.')
+            except Exception as exc:report_error('Cannot save data key',str(exc),parent=dialog)
+        ttk.Button(dialog,text='Save market-data key',command=save).pack(pady=8)
+
     def settings_dialog(self):
-        dialog=tk.Toplevel(self);dialog.title('Strategy rules & parameters');dialog.geometry('740x790')
-        text=('Both SMC detectors require a closed-candle rejection, retest of a still-valid FVG or order block, and volume >= prior 20-bar mean × multiplier.\n\n'
-              'Trendline: two confirmed ascending pivot lows / descending pivot highs; line retest within 0.1%; BOS or CHoCH within 10 bars.\n\n'
-              'EMA50: close on the trend side of EMA50; CHoCH within 10 bars. Pivots require N bars on both sides. OB = last opposite candle in 20 bars before structure break.\n\n'
-              'Fibonacci: latest confirmed ordered swing; rejection out of 50-61.8% zone, with volume. Model gates require same-candle six-bar forecast direction.\n\n'
-              'TP is capped before the nearest opposing block, even below 2R. Partial touches retain blocks; a wick strictly beyond the far edge invalidates. Models never replace entry detectors.\n\n'
-              'These are explicit implementation assumptions, not a claim that annotated examples have been validated. Stop/cost defaults were proposed, not approved. Funding is excluded.')
-        ttk.Label(dialog,text=text,wraplength=700).pack(padx=15,pady=15)
-        current=asdict(Settings(**self.store.setting('strategy',{})))
-        fields={}
+        dialog=tk.Toplevel(self);dialog.title('Strategy rules & experimental risk policy');dialog.geometry('780x750')
+        pane=ttk.Frame(dialog);pane.pack(fill='both',expand=True)
+        canvas=tk.Canvas(pane,bg='#111827',highlightthickness=0)
+        scroll=ttk.Scrollbar(pane,orient='vertical',command=canvas.yview)
+        scroll.pack(side='right',fill='y');canvas.pack(side='left',fill='both',expand=True);canvas.configure(yscrollcommand=scroll.set)
+        body=ttk.Frame(canvas);window=canvas.create_window(0,0,window=body,anchor='nw')
+        body.bind('<Configure>',lambda e:canvas.configure(scrollregion=canvas.bbox('all')))
+        canvas.bind('<Configure>',lambda e:canvas.itemconfigure(window,width=e.width))
+        dialog.bind('<MouseWheel>',lambda e:canvas.yview_scroll(-int(e.delta/120),'units'))
+        text=('Quality-v2 is EXPERIMENTAL: structure/ATR stop, maximum stop distance, completed 15-minute EMA20 direction + slope, minimum net reward/loss ratio after costs. TP stays before the nearest opposing block; too little room means skip.\n\n'
+              'Risk budgets apply to each independent paper account across all symbols. SPY/QQQ share one correlated group; BTC/ETH/SOL share another. Defaults are hypotheses, not an established profitable strategy.\n\n'
+              'Legacy mode retains the old entry policy. Existing records are never rewritten; changing account size/budgets revalues quality-v2 simulations. Annotated SMC validation remains outstanding. Funding/ETF borrow/dividends are excluded.\n\n'
+              'Percentages below are fractions: 0.0025 = 0.25%. quality_policy: 1 = experimental rules, 0 = legacy. stop_pct is the maximum structure-stop distance in quality-v2. equity_cost_pct is an estimated spread/slippage/fee scenario, not a broker quote.')
+        ttk.Label(body,text=text,wraplength=710).pack(padx=15,pady=15)
+        current=asdict(Settings(**self.store.setting('strategy',{})));fields={}
         for name,value in current.items():
-            row=ttk.Frame(dialog);row.pack(fill='x',padx=15,pady=3)
-            ttk.Label(row,text=name+' (fraction for percentages)',width=40).pack(side='left')
+            row=ttk.Frame(body);row.pack(fill='x',padx=15,pady=3)
+            ttk.Label(row,text=name,width=40).pack(side='left')
             var=tk.StringVar(value=str(value));fields[name]=var;ttk.Entry(row,textvariable=var,width=15).pack(side='left')
         def save():
             try:
-                values={k:int(v.get()) if k=='pivot' else float(v.get()) for k,v in fields.items()}
-                if not all(math.isfinite(v) for v in values.values()):raise ValueError('Finite values required')
+                values={k:int(v.get()) if k in ('pivot','quality_policy') else float(v.get()) for k,v in fields.items()}
                 Settings(**values).validate();self.store.set_setting('strategy',values)
                 self.store.event('settings',str(values));dialog.destroy()
             except Exception as exc:report_error('Invalid settings',str(exc),parent=dialog)
-        ttk.Button(dialog,text='Save parameters for future paper entries',command=save).pack(pady=10)
+        ttk.Button(body,text='Save policy for future paper entries',command=save).pack(pady=10)
 
     def drain(self):
         for _ in range(300):
@@ -297,13 +337,27 @@ class App(tk.Tk):
                 self.market[p['symbol']]=p['bars'];self.received[p['symbol']]=p['received'];self.render_chart()
             elif kind=='analysis':self.analysis[p['symbol']]=p;self.render_chart()
             elif kind=='trades':self.render_trades(p['trades'])
+            elif kind=='feed':
+                self.feed_info[p['symbol']]=p['message'];self.status.set(p['message']);self.append_log(p['message'])
             elif kind=='model':
                 self.models[(p['symbol'],p['name'])]=p
                 self.append_log(p['symbol']+' '+p['name']+': '+p['status'])
                 self.render_chart()
             else:self.status.set(p['message']);self.append_log(p['message'])
         now=time.time()
-        self.prices.set('   |   '.join(s.replace('-USDT','')+': '+(f'{self.market[s][-1].close:,.2f}'+(('  LIVE' if not self.market[s][-1].confirmed else '  CLOSED BAR ONLY') if now-self.received.get(s,0)<30 and now*1000-self.market[s][-1].time<600000 else '  STALE') if s in self.market else 'connecting') for s in SYMBOLS))
+        from .instruments import market_open
+        labels=[]
+        for symbol in SYMBOLS:
+            bars=self.market.get(symbol)
+            if not bars:
+                state='ETF key/setup required' if symbol in ETF_SYMBOLS else 'connecting'
+                labels.append(symbol+': '+state);continue
+            age=now*1000-bars[-1].time
+            if symbol in ETF_SYMBOLS:
+                state='CLOSED / last bar' if not market_open(symbol,int(now*1000)) else '5m indicative' if age<600000 and now-self.received.get(symbol,0)<360 else 'DELAYED / entries blocked'
+            else:state='LIVE' if now-self.received.get(symbol,0)<30 and age<600000 else 'STALE'
+            labels.append(symbol.replace('-USDT','')+f': {bars[-1].close:,.2f} '+state)
+        self.prices.set('   |   '.join(labels))
         self.after(500,self.drain)
 
     def append_log(self,message):
@@ -372,11 +426,11 @@ class App(tk.Tk):
                 for j,val in enumerate(forecast['values']):pts.extend([left+(len(bars)+j)*dx,max(10,min(h-10,y(val)))])
                 canvas.create_line(*pts,fill=color,width=2)
         notes=analysis.get('notes',{});signals=analysis.get('signals',[])
-        self.detail.set(symbol+' | 5m | '+stamp(bars[-1].time)+' | '+('forming' if not bars[-1].confirmed else 'confirmed')+' | '+str(notes.get('structure',''))+' | '+(', '.join(s.strategy+' '+s.side for s in signals) or 'No current entry'))
+        self.detail.set(symbol+' | 5m | '+stamp(bars[-1].time)+' | '+('forming' if not bars[-1].confirmed else 'confirmed')+' | '+str(notes.get('structure',''))+' | '+(', '.join(s.strategy+' '+s.side for s in signals) or 'No current entry')+(' | ETF regular session / indicative prices' if symbol in ETF_SYMBOLS else ''))
         labels=[]
         for name in ('Kronos','TimesFM'):
             p=self.models.get((symbol,name),{});f=p.get('forecast')
-            labels.append(name+': '+(f'{f["checkpoint"]} | {stamp(f["asof"])} | 30m | {f.get("latency_s",0):.2f}s | final {f["values"][-1]:.3f}' if f else p.get('status','waiting')))
+            labels.append(name+': '+(f'{f["checkpoint"]} | {stamp(f["asof"])} | 6 trading bars | {f.get("latency_s",0):.2f}s | final {f["values"][-1]:.3f}' if f else p.get('status','waiting')))
         self.model_status.set(' | '.join(labels))
         self.render_decisions(symbol)
         if time.time()-self.last_scores>10:
@@ -405,25 +459,34 @@ class App(tk.Tk):
             if not signal and latest and latest['closed'] is not None:state='CLOSED / NO NEW SIGNAL'
             row=opened
             self.decisions.insert('','end',values=(track,state,row['side'] if row else signal.side if signal else '-',stamp(row['opened']) if row else stamp(signal.time) if signal else '-',f'{row["entry"]:.4f}' if row else f'{signal.entry:.4f}' if signal else '-',f'{row["stop"]:.4f}' if row else f'{signal.stop:.4f}' if signal else '-',f'{row["target"]:.4f}' if row else f'{signal.target:.4f}' if signal else '-',f'{abs(row["target"]-row["entry"])/abs(row["entry"]-row["stop"]):.2f}' if row else f'{signal.rr:.2f}' if signal else '-'))
-        text=json.dumps({'checks':notes.get('checks',{}),'target_decisions':notes.get('target_decisions',[]),'note':'All entries here are paper only. False checks explain NO SIGNAL.'},indent=2)
+        text=json.dumps({'checks':notes.get('checks',{}),'target_decisions':notes.get('target_decisions',[]),'quality_checks':notes.get('quality_checks',[]),'note':'All entries here are paper only. False checks explain NO SIGNAL.'},indent=2)
         if getattr(self,'evidence_text',None)!=text:
             self.evidence_text=text;self.evidence.delete('1.0','end');self.evidence.insert('1.0',text)
 
     def render_trades(self,rows):
+        from .risk import account
+        cfg=Settings(**self.store.setting('strategy',{}))
         self.rows=rows;selected=self.trades.selection()
+        prices={s:bars[-1].close for s,bars in self.market.items()}
         for item in self.trades.get_children():self.trades.delete(item)
         for row in rows[:500]:
-            exit=row['exit'];price=(exit if row['closed'] is not None else None) or (self.market[row['symbol']][-1].close if row['symbol'] in self.market else row['entry'])
-            self.trades.insert('','end',iid=str(row['id']),values=(row['id'],row['track'],row['symbol'],row['side'],stamp(row['opened']),f'{row["entry"]:.3f}',f'{row["stop"]:.3f}',f'{row["target"]:.3f}',f'{exit:.3f}' if exit else 'OPEN',f'{net_return(row,price)*100:+.3f}%'))
+            exit=row['exit'];price=(exit if row['closed'] is not None else None) or prices.get(row['symbol'],row['entry'])
+            net=net_return(row,price);dollars=net*row['entry']*row['quantity'];priced=row['closed'] is not None or row['symbol'] in prices
+            self.trades.insert('','end',iid=str(row['id']),values=(row['id'],row['track'],row['symbol'],row['side'],stamp(row['opened']),f'{net*100:+.3f}%' if priced else 'UNPRICED',money(net*100) if priced else 'UNPRICED',f'{row["entry"]:.3f}',f'{row["stop"]:.3f}',f'{row["target"]:.3f}',f'{exit:.3f}' if exit else 'OPEN',f'{row["quantity"]:.6f}',money(dollars,2) if priced else 'UNPRICED',row.get('policy','legacy-v1'),row.get('setup_key','')))
         if selected and self.trades.exists(selected[0]):self.trades.selection_set(selected)
         for item in self.summary.get_children():self.summary.delete(item)
+        for item in self.account_table.get_children():self.account_table.delete(item)
         for track in ('Alyssa manual',)+TRACKS:
             days={'All time':None,'Last 24 hours':1,'Last 7 days':7}[self.window.get()]
             since=0 if days is None else time.time()*1000-days*86400000
-            entries=[x for x in rows if x['track']==track and x['symbol']==self.symbol.get() and x['opened']>=since]
-            metrics=trade_metrics(entries,{s:bars[-1].close for s,bars in self.market.items()})
-            self.summary.insert('','end',values=(track,metrics['closed'],metrics['open'],f'{metrics["wins"]/metrics["closed"]*100:.1f}%' if metrics['closed'] else '-',f'{metrics["net"]*100:+.3f}%',f'{metrics["unrealized"]*100:+.3f}%',f'{metrics["net_r"]:+.2f}',f'{metrics["expectancy_r"]:+.2f}' if metrics['expectancy_r'] is not None else '-',f'{metrics["max_drawdown"]*100:.3f}%'))
-
+            selected_symbol=self.symbol.get() if self.asset_scope.get()=='Chart symbol' else self.asset_scope.get()
+            entries=[x for x in rows if x['track']==track and (selected_symbol=='All markets' or x['symbol']==selected_symbol) and x['opened']>=since and (self.policy_filter.get()=='All policies' or x.get('policy','legacy-v1')==self.policy_filter.get())]
+            metrics=trade_metrics(entries,prices);average=metrics['average_dollars_per_100']
+            self.summary.insert('','end',values=(track,metrics['closed'],metrics['open'],f'{metrics["wins"]/metrics["closed"]*100:.1f}%' if metrics['closed'] else '-',money(average) if average is not None else '-',f'{metrics["net"]*100:+.3f}%',f'{metrics["unrealized"]*100:+.3f}%' if not metrics['unpriced_open'] else 'UNPRICED',f'{metrics["profit_factor"]:.2f}' if metrics['profit_factor'] is not None else '-',f'{metrics["net_r"]:+.2f}',f'{metrics["expectancy_r"]:+.2f}' if metrics['expectancy_r'] is not None else '-',f'{metrics["max_drawdown"]*100:.3f}%'))
+            if track!='Alyssa manual':
+                a=account(rows,track,prices,cfg)
+                risk=sum((abs(t['entry']-t['stop'])+t['entry']*t['cost_pct'])*t['remaining'] for t in a['opened'])
+                self.account_table.insert('','end',values=(track,f'${a["equity"]:,.2f}',f'${a["marked_equity"]-a["equity"]:+.2f}' if not a['unpriced_open'] else 'UNPRICED',f'${a["marked_equity"]:,.2f}' if not a['unpriced_open'] else 'UNPRICED',f'${100*(a["marked_equity"]/cfg.initial_equity-1):+.3f}' if not a['unpriced_open'] else 'UNPRICED',f'${risk:.2f}',f'${a["closed_drawdown_cash"]:.2f}',f'{a["dollar_profit_factor"]:.2f}' if a['dollar_profit_factor'] is not None else '-'))
 
     def shutdown(self):
         self.engine.shutdown();self.store.close();self.destroy()
@@ -443,8 +506,23 @@ def main():
             assert app.store.trades()[0]['remaining']==1
             app.fields['Exit size'].set('1');app.manual_close()
             assert app.store.trades()[0]['closed'] is not None
+            # Dollar-column and ETF selector acceptance uses explicit fixtures, never a feed.
+            assert 'SPY' in SYMBOLS and 'QQQ' in SYMBOLS
+            fixture=app.store.open_trade('Fibonacci','SPY','long',0,100,99,102,'GUI fixture only',policy='quality-v2')
+            app.store.close_trade(fixture,100.42,1000,'fixture',.0015)
+            app.render_trades(app.store.trades())
+            assert app.trades.set(str(fixture),'$per100')=='+$0.270'
+            app.trades.selection_set(str(fixture));app.show_match()
+            app.stock_setup();app.update()
+            dialogs=[w for w in app.winfo_children() if isinstance(w,tk.Toplevel)]
+            assert dialogs
+            for w in dialogs:w.destroy()
+            app.settings_dialog();app.update()
+            dialogs=[w for w in app.winfo_children() if isinstance(w,tk.Toplevel)]
+            assert dialogs
+            for w in dialogs:w.destroy()
             app.shutdown()
-            reopened=Store(Path(directory)/'test.db');assert len(reopened.trades())==1;reopened.close()
+            reopened=Store(Path(directory)/'test.db');assert len(reopened.trades())==2;reopened.close()
         return
     if '--acceptance-smoke' in sys.argv:
         from .smoke import desktop_smoke

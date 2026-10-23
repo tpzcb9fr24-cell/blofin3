@@ -1,14 +1,10 @@
-# Alyssa — BloFin Live Observer
+# Alyssa — Multi-market Paper Observer
 
-Windows observer-only companion for BTC/ETH/SOL perpetuals. All strategy entries are paper simulations. It cannot place exchange orders.
+**0.3.0 candidate: Windows build and installed-app verification pending.** Dollar P/L per $100, independent experimental quality-v2 paper accounts, structure/ATR stops, cost-adjusted reward gates and exposure limits are implemented. Historical trades remain legacy-v1.
 
-**0.2.3 Windows rebuild published:** [Download the smaller updater (~143 MB)](https://github.com/tpzcb9fr24-cell/blofin3/releases/download/observer-1/BloFinObserver-Update.exe), or [full setup (~1.1 GB)](https://github.com/tpzcb9fr24-cell/blofin3/releases/download/observer-1/BloFinObserver-Setup.exe).
+**SPY/QQQ live acceptance is BLOCKED pending a user-configured Twelve Data market-data key and ETF entitlement.** The adapter and session-aware model/calendar plumbing are implemented; no live ETF feed or profitability improvement is claimed. See [0.3.0 scope, setup, validation and limitations](QUALITY_POLICY_0_3.md).
 
-The [Windows verification workflow](https://github.com/tpzcb9fr24-cell/blofin3/actions/runs/39780896692) passed the unit, layout, live feed, genuine model, frozen-app, installed-app and updater preservation checks. This rebuild includes the scrolling and hide-chart fix. [Verification details](REBUILD_VERIFICATION.md).
-
-Existing installations can use the smaller updater after closing the companion. It retains model weights and the local journal. No end-user Python installation or CSV upload is required.
-
-The build no longer downloads a baseline installer from the inaccessible repository. It tests the updater over the freshly built full setup and checks retained model and journal hashes. Historical evidence for updating 0.2.1 is retained, but that earlier-version test is not repeated in this rebuild. Exact Windows 11 display acceptance and annotated SMC/TP validation remain outstanding.
+[Releases](https://github.com/tpzcb9fr24-cell/blofin3/releases). Close the existing companion before applying an updater. No end-user Python installation or CSV upload. No real order placement or brokerage connection.
 
 ## Implemented
 

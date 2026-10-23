@@ -1,7 +1,7 @@
 import json
 import time
 from pathlib import Path
-from .market import history, contiguous, SYMBOLS
+from .market import history, contiguous, CRYPTO_SYMBOLS as SYMBOLS
 from .models import Models
 
 def live_smoke():
@@ -23,6 +23,16 @@ def model_smoke():
         assert len(forecast['values'])==6
         forecast['latency_seconds']=time.monotonic()-start
         results[name]=forecast
+    # Genuine inference on clearly synthetic ETF input checks session-aware plumbing only.
+    # It is never a substitute for live SPY/QQQ acceptance using a configured data key.
+    from .instruments import future_times
+    from .market import Candle
+    from datetime import datetime,timezone
+    start=int(datetime(2026,11,27,14,30,tzinfo=timezone.utc).timestamp()*1000)
+    times=[start]+future_times('SPY',start,79)
+    fixture=[Candle(t,500+i*.01,500.2+i*.01,499.8+i*.01,500.05+i*.01,1000,1000*(500.05+i*.01)) for i,t in enumerate(times)]
+    results['ETF_synthetic_input_only']={name:models.predict(name,fixture,symbol='SPY') for name in ('Kronos','TimesFM')}
+    results['ETF_live_acceptance']='BLOCKED: user-provided market-data key not configured on build runner'
     Path('model-smoke.json').write_text(json.dumps(results,indent=2))
     print(json.dumps(results))
 

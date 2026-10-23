@@ -58,6 +58,7 @@ jobs:
         run: >-
           python -m PyInstaller --noconfirm --clean --windowed --onedir
           --name BloFinObserver --paths src --collect-all timesfm
+          --collect-all exchange_calendars --collect-all pyluach --collect-all tzdata
           --collect-all model --collect-all huggingface_hub --collect-all einops --collect-all safetensors
           --copy-metadata timesfm --copy-metadata torch --copy-metadata huggingface_hub --copy-metadata safetensors
           --add-data "model-assets;model-assets" src/strategy_lab/__main__.py
@@ -140,4 +141,4 @@ jobs:
         shell: pwsh
         run: |
           $tag = "observer-${{ github.run_number }}"
-          gh release create $tag installer-output/* --target '${{ github.sha }}' --prerelease --title "BloFin Observer build ${{ github.run_number }}" --notes 'Display layout update (0.2.3): whole-window scrolling, hide/show chart, and horizontal/vertical table scrollbars. Small-window layout, public data, genuine models and installed-app checks passed on Windows Server 2022. Interactive Windows 11 layout acceptance and annotated SMC validation remain outstanding.'
+          gh release create $tag installer-output/* --target '${{ github.sha }}' --prerelease --title "BloFin Observer build ${{ github.run_number }}" --notes 'Observer 0.3.0: dollar P/L per $100, independent experimental quality-v2 paper accounts and risk gates, SPY/QQQ data-key setup and session-aware integration. Crypto live data, models, installer and GUI checks passed on Windows Server 2022. ETF live-feed acceptance is BLOCKED pending a user-configured Twelve Data key/entitlement; synthetic ETF input tests only verify model/calendar plumbing. No profitability claim. Windows 11 interactive and annotated SMC acceptance remain outstanding.'

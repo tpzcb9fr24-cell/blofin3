@@ -24,19 +24,20 @@ class TargetDecision:
     reason: str
     blocking_order_block: OrderBlock | None = None
     buffer_pct: float = 0.0
+    net_rr: float = 0.0
 
 
 def choose_target(*, entry: float, stop: float, side: Side, blocks: Iterable[OrderBlock],
                   as_of: int, desired_rr: float = 2.0, buffer_pct: float = 0.0005,
-                  roundtrip_cost_pct: float = 0.0015) -> TargetDecision:
+                  roundtrip_cost_pct: float = 0.0015, min_net_rr: float = 0.0) -> TargetDecision:
     """Cap target before nearest *known active* opposing OB; never require 2R.
 
     roundtrip_cost_pct is an entry-notional approximation of fees+slippage.
     Only blocks formed by as_of and not invalidated by as_of are eligible.
     """
-    if not all(math.isfinite(x) for x in (entry,stop,desired_rr,buffer_pct,roundtrip_cost_pct)):
+    if not all(math.isfinite(x) for x in (entry,stop,desired_rr,buffer_pct,roundtrip_cost_pct,min_net_rr)):
         raise ValueError('Finite prices and parameters required')
-    if entry <= 0 or stop <= 0 or desired_rr <= 0 or not (0 <= buffer_pct < 1) or roundtrip_cost_pct < 0:
+    if entry <= 0 or stop <= 0 or desired_rr <= 0 or not (0 <= buffer_pct < 1) or roundtrip_cost_pct < 0 or min_net_rr<0:
         raise ValueError('Invalid price or parameter')
     if side not in ('long', 'short'):
         raise ValueError('Invalid side')
@@ -61,7 +62,8 @@ def choose_target(*, entry: float, stop: float, side: Side, blocks: Iterable[Ord
               else max([original] + candidates))
     reward = (target - entry) if side == 'long' else (entry - target)
     net_pct = reward / entry - roundtrip_cost_pct
-    accepted = reward > 0 and net_pct > 0
+    net_rr=net_pct/(risk/entry+roundtrip_cost_pct)
+    accepted = reward > 0 and net_pct > 0 and net_rr>=min_net_rr
     return TargetDecision(accepted, target if accepted else None, original,
                           max(0, reward / risk), net_pct,
-                          'accepted_capped' if accepted and candidates else 'accepted_2r' if accepted else 'insufficient_net_reward',blockers.get(target),buffer_pct)
+                          'accepted_capped' if accepted and candidates else 'accepted_2r' if accepted else 'insufficient_net_reward_or_R',blockers.get(target),buffer_pct,net_rr)

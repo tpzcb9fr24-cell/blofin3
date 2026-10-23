@@ -19,7 +19,23 @@ class Settings:
     fib_deep: float = .618
     fib_extension: float = 1.618
 
+    quality_policy: int = 1
+    min_net_rr: float = 1.0
+    atr_buffer: float = .25
+    risk_fraction: float = .0025
+    max_open_risk: float = .01
+    group_open_risk: float = .005
+    daily_loss_fraction: float = .01
+    initial_equity: float = 10000.
+    equity_cost_pct: float = .0005
+
     def validate(self):
+        import math
+        from dataclasses import asdict
+        if not all(math.isfinite(v) for v in asdict(self).values()):raise ValueError('Finite settings required')
+        if self.quality_policy not in (0,1) or not 0<=self.min_net_rr<=10 or not 0<=self.atr_buffer<=5:raise ValueError('Invalid quality policy')
+        if not 0<self.risk_fraction<=self.group_open_risk<=self.max_open_risk<=.1 or not 0<self.daily_loss_fraction<=.1 or not self.initial_equity>=100:raise ValueError('Invalid paper-account risk budgets')
+        if not 0<=self.equity_cost_pct<.05:raise ValueError('ETF costs must be 0–5%')
         if not 0 < self.stop_pct < .2 or not 0 < self.rr <= 20:
             raise ValueError('Stop must be 0–20%; RR must be 0–20')
         if not 0 <= self.buffer_pct < .05 or not 0 <= self.cost_pct < .05:
@@ -102,9 +118,9 @@ def ema(bars, span=50):
     return value
 
 
-def detect(bars, settings=Settings(), known_blocks=()):
+def detect(bars, settings=Settings(), known_blocks=(), symbol=None):
     settings.validate()
-    if len(bars)<60 or any(not c.confirmed for c in bars) or not contiguous(bars):
+    if len(bars)<60 or any(not c.confirmed for c in bars) or not contiguous(bars,symbol):
         return [], [], {'status':'Waiting for 60 contiguous confirmed five-minute bars'}
     blocks,gaps,trend,events=structure(bars,settings.pivot)
     asof=bars[-1].end
@@ -166,9 +182,15 @@ def detect(bars, settings=Settings(), known_blocks=()):
                 candidates.append(('Fibonacci',side,'Confirmed swing 50–61.8% retracement rejection + volume'))
     signals=[]
     for name,side,reason in candidates:
-        stop=c.close*(1-settings.stop_pct if side=='long' else 1+settings.stop_pct)
+        from .risk import structural_stop,trend_context
+        from .instruments import ETF_SYMBOLS
+        cost=settings.equity_cost_pct if symbol in ETF_SYMBOLS else settings.cost_pct
+        stop=structural_stop(bars,side,c.close,settings) if settings.quality_policy else c.close*(1-settings.stop_pct if side=='long' else 1+settings.stop_pct)
+        regime=trend_context(bars,side) if settings.quality_policy else {'accepted':True,'reason':'legacy policy'}
+        notes.setdefault('quality_checks',[]).append({'strategy':name,'side':side,'structural_stop':stop,'regime':regime,'minimum_net_R':settings.min_net_rr})
+        if stop is None or not regime['accepted']:continue
         target=choose_target(entry=c.close,stop=stop,side=side,blocks=blocks,as_of=c.end,
-                             desired_rr=settings.rr,buffer_pct=settings.buffer_pct,roundtrip_cost_pct=settings.cost_pct)
+                             desired_rr=settings.rr,buffer_pct=settings.buffer_pct,roundtrip_cost_pct=cost,min_net_rr=settings.min_net_rr if settings.quality_policy else 0)
         notes.setdefault('target_decisions',[]).append({'strategy':name,'side':side,'entry':c.close,'stop':stop,'unrestricted':target.original_target,'target':target.target,'gross_rr':target.gross_rr,'net_reward_pct':target.net_reward_pct,'reason':target.reason})
         if target.accepted:
             signals.append(Signal(name,side,c.end,c.close,stop,target.target,reason+'; '+target.reason,target.gross_rr))

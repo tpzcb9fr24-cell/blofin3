@@ -6,7 +6,7 @@ from dataclasses import dataclass, asdict
 from .transport import get_json
 from urllib.parse import urlencode
 
-SYMBOLS = ('BTC-USDT', 'ETH-USDT', 'SOL-USDT')
+from .instruments import SYMBOLS,CRYPTO_SYMBOLS,ETF_SYMBOLS,next_bar
 INTERVAL = 300_000
 
 @dataclass(frozen=True)
@@ -43,12 +43,12 @@ def parse_candle(row):
     return Candle(t, o, h, l, c, volume, amount, str(row[8]) == '1')
 
 
-def contiguous(bars):
-    return all(b.time - a.time == INTERVAL for a, b in zip(bars, bars[1:]))
+def contiguous(bars,symbol=None):
+    return all((next_bar(symbol,a.time)==b.time if symbol in ETF_SYMBOLS else b.time-a.time==INTERVAL) for a,b in zip(bars,bars[1:]))
 
 
 def public_get(symbol, limit=300, before=None):
-    if symbol not in SYMBOLS:
+    if symbol not in CRYPTO_SYMBOLS:
         raise ValueError('Unsupported instrument')
     params = dict(instId=symbol, bar='5m', limit=str(limit))
     if before is not None:
@@ -86,7 +86,7 @@ def history(symbol, count=512):
 
 
 def quote(symbol):
-    if symbol not in SYMBOLS:raise ValueError('Unsupported instrument')
+    if symbol not in CRYPTO_SYMBOLS:raise ValueError('Unsupported instrument')
     url='https://openapi.blofin.com/api/v1/market/tickers?'+urlencode({'instId':symbol})
     payload=get_json(url,timeout=10)
     if payload.get('code')!='0' or len(payload.get('data',[]))!=1:raise ValueError('Invalid quote response')
