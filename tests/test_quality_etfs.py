@@ -213,3 +213,24 @@ def test_model_gate_rechecks_observed_fill_not_old_signal_close(tmp_path,monkeyp
     engine.pending[('BTC-USDT',asof)]={'signals':[signal],'entered':set()}
     db=Store(tmp_path/'db');engine.entries(db,'BTC-USDT',asof)
     assert [r['track'] for r in db.trades()]==['SMC EMA50']
+
+
+def test_etf_model_variants_share_a_cached_indicative_quote(tmp_path,monkeypatch):
+    import strategy_lab.engine as module
+    from strategy_lab.engine import Engine
+    from strategy_lab.strategies import Signal
+    now=ms('2026-10-23T14:35:10');asof=ms('2026-10-23T14:35:00')
+    monkeypatch.setattr(module.time,'time',lambda:now/1000)
+    monkeypatch.setattr(stocks,'load_key',lambda path:'fixture-key')
+    monkeypatch.setattr(module,'detect',lambda *a,**k:([],[],{}))
+    calls=[]
+    def quote(*a):calls.append(1);return {'price':100,'time':asof,'basis':'fixture'}
+    monkeypatch.setattr(stocks,'quote',quote)
+    engine=Engine(tmp_path/'db',queue.Queue());engine.settings=Settings(quality_policy=0)
+    engine.bars['SPY']={asof-300000:bar(asof-300000)}
+    for name in ('Kronos','TimesFM'):engine.forecasts[('SPY',name)]={'asof':asof,'values':[101]}
+    signal=Signal('SMC EMA50','long',asof,100,99,102,'fixture',2)
+    engine.pending[('SPY',asof)]={'signals':[signal],'entered':set()}
+    db=Store(tmp_path/'db');engine.entries(db,'SPY',asof)
+    assert len(db.trades())==4
+    assert len(calls)==1

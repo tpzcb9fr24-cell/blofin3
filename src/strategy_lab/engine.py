@@ -153,15 +153,18 @@ class Engine:
                 # Fill at the latest observed price, not retrospectively at model-input close.
                 try:
                     live_quote=self.quotes.get(symbol)
-                    if not live_quote or time.time()*1000-live_quote['time']>1000:
+                    refresh=not live_quote or (time.time()*1000-live_quote.get('received_ms',0)>30000 if symbol in ETF_SYMBOLS else time.time()*1000-live_quote['time']>1000)
+                    if refresh:
                         if symbol in ETF_SYMBOLS:
                             from .stocks import load_key,quote as stock_quote
                             live_quote=stock_quote(symbol,load_key(self.key_path))
                         else:live_quote=quote(symbol)
+                        live_quote['received_ms']=int(time.time()*1000)
                         self.quotes[symbol]=live_quote
                     if not 0<=time.time()*1000-live_quote['time']<(90000 if symbol in ETF_SYMBOLS else 15000):
                         raise ValueError('Stale bid/ask')
                 except Exception as exc:
+                    self.quotes.pop(symbol,None)
                     self.emit('error',message='Paper entry skipped: no fresh bid/ask: '+str(exc))
                     pending['entered'].add(track)
                     continue
