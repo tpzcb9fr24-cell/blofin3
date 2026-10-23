@@ -196,3 +196,20 @@ def test_windows_key_roundtrip_and_no_plaintext(tmp_path,monkeypatch):
     path=tmp_path/'key';stocks.save_key(path,'test-data-key-never-production')
     assert b'test-data-key-never-production' not in path.read_bytes()
     assert stocks.load_key(path)=='test-data-key-never-production'
+
+
+def test_model_gate_rechecks_observed_fill_not_old_signal_close(tmp_path,monkeypatch):
+    import strategy_lab.engine as module
+    from strategy_lab.engine import Engine
+    from strategy_lab.strategies import Signal
+    now=ms('2026-10-23T14:35:10');asof=ms('2026-10-23T14:35:00')
+    monkeypatch.setattr(module.time,'time',lambda:now/1000)
+    monkeypatch.setattr(module,'quote',lambda s:{'bid':103,'ask':103,'time':now})
+    monkeypatch.setattr(module,'detect',lambda *a,**k:([],[],{}))
+    engine=Engine(tmp_path/'db',queue.Queue());engine.settings=Settings(quality_policy=0)
+    engine.bars['BTC-USDT']={asof-300000:bar(asof-300000)}
+    engine.forecasts[('BTC-USDT','Kronos')]={'asof':asof,'values':[101]}
+    signal=Signal('SMC EMA50','long',asof,100,99,102,'fixture',2)
+    engine.pending[('BTC-USDT',asof)]={'signals':[signal],'entered':set()}
+    db=Store(tmp_path/'db');engine.entries(db,'BTC-USDT',asof)
+    assert [r['track'] for r in db.trades()]==['SMC EMA50']

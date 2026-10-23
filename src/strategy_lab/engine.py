@@ -167,6 +167,10 @@ class Engine:
                     continue
                 # Cross displayed spread; residual slippage is included in cost_pct.
                 price=live_quote['price'] if symbol in ETF_SYMBOLS else live_quote['ask'] if s.side=='long' else live_quote['bid']
+                names=('Kronos','TimesFM') if 'both' in track else ('Kronos',) if 'Kronos' in track else ('TimesFM',) if 'TimesFM' in track else ()
+                if not all(agrees(self.forecasts.get((symbol,name)),s.side,price,asof) for name in names):
+                    self.emit('risk',message=track+' '+symbol+': model direction no longer agrees at observed fill')
+                    pending['entered'].add(track);continue
                 cfg=self.settings
                 from .targets import choose_target
                 closed=[c for c in sorted(self.bars[symbol].values(),key=lambda c:c.time) if c.confirmed]
