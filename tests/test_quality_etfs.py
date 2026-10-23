@@ -234,3 +234,25 @@ def test_etf_model_variants_share_a_cached_indicative_quote(tmp_path,monkeypatch
     db=Store(tmp_path/'db');engine.entries(db,'SPY',asof)
     assert len(db.trades())==4
     assert len(calls)==1
+
+
+def test_worker_keeps_draining_results_after_etf_poll(tmp_path,monkeypatch):
+    import strategy_lab.engine as module
+    from strategy_lab.engine import Engine
+    engine=Engine(tmp_path/'db',queue.Queue())
+    monkeypatch.setattr(module,'history',lambda symbol:[])
+    monkeypatch.setattr(stocks,'load_key',lambda path:None)
+    monkeypatch.setattr(engine,'update',lambda *a,**k:None)
+    monkeypatch.setattr(engine,'entries',lambda *a:None)
+    passes=[]
+    def wait(seconds):
+        passes.append(1)
+        if len(passes)==1:
+            engine.model_results.put(('BTC-USDT','Kronos',1,{'values':[100],'asof':1},None))
+        else:engine.stop.set()
+    monkeypatch.setattr(engine.stop,'wait',wait)
+    engine.run()
+    assert engine.forecasts[('BTC-USDT','Kronos')]['values']==[100]
+    db=Store(tmp_path/'db')
+    assert not db.db.execute("SELECT 1 FROM events WHERE kind='worker_error'").fetchone()
+    db.close()

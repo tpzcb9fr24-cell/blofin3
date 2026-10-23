@@ -235,7 +235,7 @@ class Engine:
                             if getattr(exc,'status',None)==403:self.blocked_until[symbol]=time.time()+60
                             self.emit('error',message=symbol+': '+str(exc)[:450])
                     next_poll=time.monotonic()+(15 if self.streaming else 3)
-                from .stocks import load_key,history as stock_history,next_poll
+                from .stocks import load_key,history as stock_history,next_poll as stock_next_poll
                 for symbol in ETF_SYMBOLS:
                     if time.time()<self.stock_next.get(symbol,0):continue
                     try:
@@ -243,7 +243,7 @@ class Engine:
                         if not key:raise ValueError('ETF DATA SETUP REQUIRED: Twelve Data market-data key')
                         new=stock_history(symbol,key,512)
                         self.update(store,symbol,new,not bool(self.bars[symbol]))
-                        self.stock_next[symbol]=next_poll(int(time.time()*1000))/1000
+                        self.stock_next[symbol]=stock_next_poll(int(time.time()*1000))/1000
                         self.feed_status[symbol]='Twelve Data 5m regular-session; indicative pricing'
                     except Exception as exc:
                         message=str(exc)
