@@ -109,7 +109,7 @@ class App(tk.Tk):
         policies=ttk.Combobox(filters,textvariable=self.policy_filter,values=('All policies','quality-v2','legacy-v1'),state='readonly',width=15)
         policies.pack(side='left',padx=8);policies.bind('<<ComboboxSelected>>',lambda e:self.render_trades(self.rows))
         self.summary=self.table(compare,('track','closed','open','win','avg_$per100','net','unrealized','profit_factor','net_R','expect_R','max_DD'),(260,65,65,70,140,100,110,100,85,85,90))
-        ttk.Label(compare,text='Avg $per100 = average closed net P/L per $100 of position value, not account growth. Open P/L estimates exit costs. Funding/ETF borrow excluded. Policies are filtered separately.').pack(anchor='w',padx=8,pady=5)
+        ttk.Label(compare,text='Avg $per100 = average closed net P/L per $100 of position value, not account growth. Open P/L estimates exit costs. Funding/ETF borrow excluded. Policy filter applies to paper records; manual records use asset/time filters only.').pack(anchor='w',padx=8,pady=5)
         self.manual_panel(journal)
         self.trades=self.table(journal,('id','track','symbol','side','time','net','$per100','entry','stop','target','exit','size','P/L_$','policy','setup_id'),(45,190,100,65,165,90,115,95,95,95,95,110,110,120,250))
         self.match=tk.StringVar(value='Select Alyssa’s journal row to compare nearest paper entries within +/-5 minutes for the same symbol.')
@@ -472,7 +472,8 @@ class App(tk.Tk):
         for row in rows[:500]:
             exit=row['exit'];price=(exit if row['closed'] is not None else None) or prices.get(row['symbol'],row['entry'])
             net=net_return(row,price);dollars=net*row['entry']*row['quantity'];priced=row['closed'] is not None or row['symbol'] in prices
-            self.trades.insert('','end',iid=str(row['id']),values=(row['id'],row['track'],row['symbol'],row['side'],stamp(row['opened']),f'{net*100:+.3f}%' if priced else 'UNPRICED',money(net*100) if priced else 'UNPRICED',f'{row["entry"]:.3f}',f'{row["stop"]:.3f}',f'{row["target"]:.3f}',f'{exit:.3f}' if exit else 'OPEN',f'{row["quantity"]:.6f}',money(dollars,2) if priced else 'UNPRICED',row.get('policy','legacy-v1'),row.get('setup_key','')))
+            sized=row['source']=='manual' or row.get('policy')=='quality-v2'
+            self.trades.insert('','end',iid=str(row['id']),values=(row['id'],row['track'],row['symbol'],row['side'],stamp(row['opened']),f'{net*100:+.3f}%' if priced else 'UNPRICED',money(net*100) if priced else 'UNPRICED',f'{row["entry"]:.3f}',f'{row["stop"]:.3f}',f'{row["target"]:.3f}',f'{exit:.3f}' if exit else 'OPEN',f'{row["quantity"]:.6f}' if sized else 'NORMALIZED',money(dollars,2) if sized and priced else 'UNPRICED' if sized else 'N/A normalized',row.get('policy','legacy-v1'),row.get('setup_key','')))
         if selected and self.trades.exists(selected[0]):self.trades.selection_set(selected)
         for item in self.summary.get_children():self.summary.delete(item)
         for item in self.account_table.get_children():self.account_table.delete(item)
@@ -480,7 +481,7 @@ class App(tk.Tk):
             days={'All time':None,'Last 24 hours':1,'Last 7 days':7}[self.window.get()]
             since=0 if days is None else time.time()*1000-days*86400000
             selected_symbol=self.symbol.get() if self.asset_scope.get()=='Chart symbol' else self.asset_scope.get()
-            entries=[x for x in rows if x['track']==track and (selected_symbol=='All markets' or x['symbol']==selected_symbol) and x['opened']>=since and (self.policy_filter.get()=='All policies' or x.get('policy','legacy-v1')==self.policy_filter.get())]
+            entries=[x for x in rows if x['track']==track and (selected_symbol=='All markets' or x['symbol']==selected_symbol) and x['opened']>=since and (x['source']=='manual' or self.policy_filter.get()=='All policies' or x.get('policy','legacy-v1')==self.policy_filter.get())]
             metrics=trade_metrics(entries,prices);average=metrics['average_dollars_per_100']
             self.summary.insert('','end',values=(track,metrics['closed'],metrics['open'],f'{metrics["wins"]/metrics["closed"]*100:.1f}%' if metrics['closed'] else '-',money(average) if average is not None else '-',f'{metrics["net"]*100:+.3f}%',f'{metrics["unrealized"]*100:+.3f}%' if not metrics['unpriced_open'] else 'UNPRICED',f'{metrics["profit_factor"]:.2f}' if metrics['profit_factor'] is not None else '-',f'{metrics["net_r"]:+.2f}',f'{metrics["expectancy_r"]:+.2f}' if metrics['expectancy_r'] is not None else '-',f'{metrics["max_drawdown"]*100:.3f}%'))
             if track!='Alyssa manual':
@@ -512,6 +513,14 @@ def main():
             app.store.close_trade(fixture,100.42,1000,'fixture',.0015)
             app.render_trades(app.store.trades())
             assert app.trades.set(str(fixture),'$per100')=='+$0.270'
+            legacy=app.store.open_trade('Fibonacci','QQQ','long',0,100,99,102,'Legacy normalized fixture')
+            app.store.close_trade(legacy,102,1000,'fixture',.0015)
+            app.render_trades(app.store.trades())
+            assert app.trades.set(str(legacy),'P/L_$')=='N/A normalized'
+            app.policy_filter.set('quality-v2');app.render_trades(app.store.trades())
+            manual_summary=app.summary.item(app.summary.get_children()[0],'values')
+            assert manual_summary[1]=='1'
+            app.policy_filter.set('All policies')
             app.trades.selection_set(str(fixture));app.show_match()
             app.stock_setup();app.update()
             dialogs=[w for w in app.winfo_children() if isinstance(w,tk.Toplevel)]
@@ -522,7 +531,7 @@ def main():
             assert dialogs
             for w in dialogs:w.destroy()
             app.shutdown()
-            reopened=Store(Path(directory)/'test.db');assert len(reopened.trades())==2;reopened.close()
+            reopened=Store(Path(directory)/'test.db');assert len(reopened.trades())==3;reopened.close()
         return
     if '--acceptance-smoke' in sys.argv:
         from .smoke import desktop_smoke
