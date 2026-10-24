@@ -1,3 +1,13 @@
+# 0.3.1 entry diagnostics and bounded quote retry
+
+Windows installer verification pending for this candidate.
+
+- Signals & evidence → Decision history — last 12 hours → Copy report.
+- Entry outcomes persist in SQLite: waiting for quotes/models, expired, stop/target/risk/model rejection, existing position and opened paper trade. Read-only feed/transport errors persist across restarts.
+- Failed fresh-quote requests retry after 5 seconds (60 seconds on HTTP 403), sharing backoff across strategy tracks for the same symbol. All retries use the original 90-second signal expiry. Late-returning quotes never fill after that deadline. No alternate host, geolocation bypass, historical fill or weaker strategy filter is added.
+- Legacy decisions without saved execution outcomes remain explicitly UNKNOWN. This update cannot establish why a historical signal had no trade.
+- Existing journal, real model files and protected market-data key remain local. Observer-only; never places real orders. SPY/QQQ live verification and Windows 11 interactive acceptance remain outstanding; no profitability claim.
+
 # Alyssa — Multi-market Paper Observer
 
 **0.3.0 prerelease: Windows build, installed-app and updater checks passed on Windows Server 2022.** Dollar P/L per $100, independent experimental quality-v2 paper accounts, structure/ATR stops, cost-adjusted reward gates and exposure limits are implemented. Historical trades remain legacy-v1.

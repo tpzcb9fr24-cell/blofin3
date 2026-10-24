@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
-AGENT='BloFinObserver/0.3.0 (public market data)'
+AGENT='BloFinObserver/0.3.1 (public market data)'
 HEADERS={'User-Agent':AGENT,'Accept':'application/json','Cache-Control':'no-cache'}
 HOST='openapi.blofin.com'
 PATHS={'/api/v1/market/candles','/api/v1/market/tickers'}

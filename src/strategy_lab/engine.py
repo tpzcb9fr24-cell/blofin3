@@ -19,13 +19,23 @@ class Engine:
         self.model_jobs={name:queue.Queue(maxsize=10) for name in ('Kronos','TimesFM')};self.model_results=queue.Queue();self.model_pending=set()
         self.bars={s:{} for s in SYMBOLS};self.last={};self.forecasts={};self.pending={}
         self.last_received={};self.quotes={};self.zones={};self.threads=[];self.active_socket=None;self.streaming=False;self.blocked_until={}
-        self.stock_next={};self.feed_status={};self.key_path=self.path.parent/'market-data.key'
+        self.audit_events=queue.Queue();self.quote_retry={};self.stock_next={};self.feed_status={};self.key_path=self.path.parent/'market-data.key'
 
     def start(self):
         for target in (self.run,self.stream,lambda:self.infer('Kronos'),lambda:self.infer('TimesFM')):
             thread=threading.Thread(target=target,daemon=True);thread.start();self.threads.append(thread)
 
-    def emit(self,kind,**payload): self.events.put((kind,payload))
+    def emit(self,kind,**payload):
+        self.events.put((kind,payload))
+        if kind in ('error','risk','transport','feed'):
+            self.audit_events.put((kind,payload.get('message','')[:1000]))
+
+    def flush_events(self,store):
+        for _ in range(300):
+            try:kind,message=self.audit_events.get_nowait()
+            except queue.Empty:break
+            store.event(kind,message)
+
 
     def stream(self):
         import websocket
@@ -133,23 +143,29 @@ class Engine:
 
     def entries(self,store,symbol,asof):
         pending=self.pending.get((symbol,asof))
-        if not pending or time.time()*1000-asof>90_000:return
+        if not pending:return
+        if time.time()*1000-asof>90_000:
+            for row in store.db.execute("SELECT track,state FROM entry_attempts WHERE symbol=? AND asof=? AND state IN ('WAITING_QUOTE','WAITING_MODEL')",(symbol,asof)).fetchall():
+                store.entry_attempt(symbol,asof,row['track'],'EXPIRED','90-second entry window ended while '+row['state'].lower())
+            return
         from .instruments import market_open
         if symbol in ETF_SYMBOLS and not market_open(symbol,int(time.time()*1000)):return
         signals=pending['signals']; smc=[s for s in signals if s.strategy.startswith('SMC')]
         for s in signals:
             tracks=[s.strategy]
             if s.strategy.startswith('SMC'):
-                k=agrees(self.forecasts.get((symbol,'Kronos')),s.side,s.entry,asof)
-                t=agrees(self.forecasts.get((symbol,'TimesFM')),s.side,s.entry,asof)
-                if k:tracks.append(s.strategy+' + Kronos')
-                if t:tracks.append(s.strategy+' + TimesFM')
-                if k and t:tracks.append(s.strategy+' + both')
-            else:
-                if any(x.side==s.side for x in smc) and all(agrees(self.forecasts.get((symbol,n)),s.side,s.entry,asof) for n in ('Kronos','TimesFM')):
-                    tracks.append('Fibonacci + SMC + both')
+                tracks += [s.strategy+' + Kronos',s.strategy+' + TimesFM',s.strategy+' + both']
+            elif any(x.side==s.side for x in smc):
+                tracks.append('Fibonacci + SMC + both')
             for track in tracks:
                 if track in pending['entered']:continue
+                names=('Kronos','TimesFM') if 'both' in track else ('Kronos',) if 'Kronos' in track else ('TimesFM',) if 'TimesFM' in track else ()
+                if not all(agrees(self.forecasts.get((symbol,name)),s.side,s.entry,asof) for name in names):
+                    previous=store.db.execute('SELECT state FROM entry_attempts WHERE symbol=? AND asof=? AND track=?',(symbol,asof,track)).fetchone()
+                    if not previous or previous['state']!='WAITING_MODEL':
+                        store.entry_attempt(symbol,asof,track,'WAITING_MODEL','Waiting for same-candle model agreement')
+                    continue
+                if time.time()<self.quote_retry.get(symbol,0):continue
                 # Fill at the latest observed price, not retrospectively at model-input close.
                 try:
                     live_quote=self.quotes.get(symbol)
@@ -166,12 +182,18 @@ class Engine:
                 except Exception as exc:
                     self.quotes.pop(symbol,None)
                     self.emit('error',message='Paper entry skipped: no fresh bid/ask: '+str(exc))
-                    pending['entered'].add(track)
+                    delay=60 if getattr(exc,'status',None)==403 else 5
+                    self.quote_retry[symbol]=time.time()+delay
+                    store.entry_attempt(symbol,asof,track,'WAITING_QUOTE','Fresh price unavailable; retry only within original 90-second window',{'error':str(exc)[:450],'retry_seconds':delay,'http_status':getattr(exc,'status',None)})
                     continue
+                if time.time()*1000-asof>90_000:
+                    store.entry_attempt(symbol,asof,track,'EXPIRED','Quote request finished after the 90-second entry window')
+                    pending['entered'].add(track);continue
                 # Cross displayed spread; residual slippage is included in cost_pct.
                 price=live_quote['price'] if symbol in ETF_SYMBOLS else live_quote['ask'] if s.side=='long' else live_quote['bid']
                 names=('Kronos','TimesFM') if 'both' in track else ('Kronos',) if 'Kronos' in track else ('TimesFM',) if 'TimesFM' in track else ()
                 if not all(agrees(self.forecasts.get((symbol,name)),s.side,price,asof) for name in names):
+                    store.entry_attempt(symbol,asof,track,'REJECTED_MODEL','Model direction no longer agrees at observed fill',{'price':price})
                     self.emit('risk',message=track+' '+symbol+': model direction no longer agrees at observed fill')
                     pending['entered'].add(track);continue
                 cfg=self.settings
@@ -186,6 +208,7 @@ class Engine:
                 from .risk import structural_stop,size_entry,POLICY
                 stop=structural_stop(closed,s.side,price,cfg) if cfg.quality_policy else price*(1-cfg.stop_pct if s.side=='long' else 1+cfg.stop_pct)
                 if stop is None:
+                    store.entry_attempt(symbol,asof,track,'REJECTED_STOP','No valid structure stop within maximum distance',{'price':price})
                     self.emit('risk',message=track+' '+symbol+': no valid structure stop within maximum distance')
                     pending['entered'].add(track);continue
                 cost=cfg.equity_cost_pct if symbol in ETF_SYMBOLS else cfg.cost_pct
@@ -193,10 +216,14 @@ class Engine:
                 if decision.accepted:
                     quantity,note=size_entry(store.trades(),track,symbol,s.side,price,stop,cost,int(time.time()*1000),cfg) if cfg.quality_policy else (1,'legacy size')
                     if quantity is None:
+                        store.entry_attempt(symbol,asof,track,'REJECTED_RISK',note,{'price':price,'stop':stop})
                         self.emit('risk',message=track+' '+symbol+': skipped: '+note)
                         pending['entered'].add(track);continue
-                    store.open_trade(track,symbol,s.side,int(time.time()*1000),price,stop,decision.target,
+                    trade_id=store.open_trade(track,symbol,s.side,int(time.time()*1000),price,stop,decision.target,
                                      s.reason+'; '+note+'; indicative fill '+json.dumps(live_quote)+'; TP evidence '+json.dumps(asdict(decision))+'; model gating as-of '+str(asof),cost_pct=cost,quantity=quantity,policy=POLICY if cfg.quality_policy else 'legacy-v1',setup_key=f'{symbol}:{asof}:{s.side}')
+                    store.entry_attempt(symbol,asof,track,'OPENED' if trade_id else 'EXISTING_POSITION', 'Paper trade recorded' if trade_id else 'Existing position or duplicate entry',{'trade_id':trade_id,'price':price,'stop':stop,'target':decision.target,'quantity':quantity})
+                else:
+                    store.entry_attempt(symbol,asof,track,'REJECTED_TARGET',decision.reason,{'price':price,'stop':stop,'target_decision':asdict(decision)})
                 pending['entered'].add(track)
 
     def paper_exits(self,store,symbol,c):
@@ -264,9 +291,12 @@ class Engine:
                     else:
                         store.event('model_error',symbol+' '+name+': '+error)
                         self.emit('model',symbol=symbol,name=name,status='UNAVAILABLE: '+error,forecast=None)
+                for symbol,asof in list(self.pending):self.entries(store,symbol,asof)
+                self.flush_events(store)
                 self.pending={k:v for k,v in self.pending.items() if time.time()-v['created']<300}
                 self.emit('trades',trades=store.trades())
             except Exception as exc:
                 store.event('worker_error',str(exc));self.emit('error',message=str(exc))
             self.stop.wait(.5)
+        self.flush_events(store)
         store.close()

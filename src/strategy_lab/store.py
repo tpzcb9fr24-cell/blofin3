@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS trades(id INTEGER PRIMARY KEY,track TEXT,symbol TEXT,
 CREATE TABLE IF NOT EXISTS forecasts(symbol TEXT,model TEXT,asof INTEGER,created INTEGER,payload TEXT,
  PRIMARY KEY(symbol,model,asof));
 CREATE TABLE IF NOT EXISTS decisions(symbol TEXT,asof INTEGER,payload TEXT,PRIMARY KEY(symbol,asof));
+CREATE TABLE IF NOT EXISTS entry_attempts(symbol TEXT,asof INTEGER,track TEXT,first_time INTEGER,last_time INTEGER,attempts INTEGER,state TEXT,reason TEXT,details TEXT,PRIMARY KEY(symbol,asof,track));
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,payload TEXT);
 CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY,time INTEGER,kind TEXT,message TEXT);
 '''
@@ -42,6 +43,12 @@ class Store:
     def event(self,kind,message):
         with self.db:
             self.db.execute('INSERT INTO events(time,kind,message) VALUES(?,?,?)',(int(time.time()*1000),kind,message))
+
+    def entry_attempt(self,symbol,asof,track,state,reason,details=None):
+        now=int(time.time()*1000)
+        with self.db:
+            self.db.execute("INSERT INTO entry_attempts VALUES(?,?,?,?,?,1,?,?,?) ON CONFLICT(symbol,asof,track) DO UPDATE SET last_time=excluded.last_time,attempts=entry_attempts.attempts+1,state=excluded.state,reason=excluded.reason,details=excluded.details",
+                            (symbol,asof,track,now,now,state,reason,json.dumps(details or {})))
 
     def setting(self,key,default=None):
         row=self.db.execute('SELECT payload FROM settings WHERE key=?',(key,)).fetchone()

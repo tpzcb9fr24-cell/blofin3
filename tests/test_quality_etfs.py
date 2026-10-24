@@ -161,6 +161,7 @@ def test_engine_etf_fills_are_indicative_fresh_and_risk_budgeted(tmp_path,monkey
     monkeypatch.setattr(stocks,'quote',lambda *a:{'price':100,'time':now-90001,'basis':'fixture'})
     engine.entries(db,'SPY',asof);assert db.trades()==[]
     engine.pending[('SPY',asof)]['entered'].clear()
+    engine.quote_retry.clear()
     monkeypatch.setattr(stocks,'quote',lambda *a:{'price':100,'time':now-1000,'basis':'one-minute indicative fixture'})
     engine.entries(db,'SPY',asof)
     row=db.trades()[0]

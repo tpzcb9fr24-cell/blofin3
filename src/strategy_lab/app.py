@@ -91,6 +91,7 @@ class App(tk.Tk):
         compare=ttk.Frame(notebook);journal=ttk.Frame(notebook);audit=ttk.Frame(notebook)
         notebook.add(compare,text='Side-by-side performance');notebook.add(journal,text='Trade journal & manual comparison');notebook.add(audit,text='Connection & inference log')
         decisions=ttk.Frame(notebook);notebook.add(decisions,text='Signals & evidence')
+        ttk.Button(decisions,text='Decision history — last 12 hours',command=self.history_dialog).pack(anchor='w',pady=5)
         self.decisions=self.table(decisions,('track','state','side','asof','entry','stop','target','R'),(260,200,70,180,90,90,90,80))
         self.evidence=tk.Text(decisions,height=9,bg='#0b1220',fg='#d1d5db',wrap='word')
         self.evidence.pack(fill='x',pady=5)
@@ -126,6 +127,23 @@ class App(tk.Tk):
         self.protocol('WM_DELETE_WINDOW',self.shutdown)
         if start:self.engine.start()
         self.after(300,self.drain)
+
+    def history_dialog(self):
+        from tkinter.scrolledtext import ScrolledText
+        from .diagnostics import decision_history
+        dialog=tk.Toplevel(self);dialog.title('Decision history — last 12 hours');dialog.geometry('1000x650')
+        controls=ttk.Frame(dialog);controls.pack(fill='x',padx=8,pady=6)
+        text=ScrolledText(dialog,wrap='word',bg='#0b1220',fg='#d1d5db',font=('Consolas',10))
+        text.pack(fill='both',expand=True,padx=8,pady=6)
+        def refresh():
+            value=decision_history(self.store)
+            text.configure(state='normal');text.delete('1.0','end');text.insert('1.0',value);text.configure(state='disabled')
+        def copy():
+            dialog.clipboard_clear();dialog.clipboard_append(text.get('1.0','end-1c'))
+        ttk.Button(controls,text='Refresh',command=refresh).pack(side='left')
+        ttk.Button(controls,text='Copy report',command=copy).pack(side='left',padx=8)
+        refresh()
+        return dialog
 
     def page_configured(self,event=None):
         self.resize_page()
@@ -526,6 +544,7 @@ def main():
             dialogs=[w for w in app.winfo_children() if isinstance(w,tk.Toplevel)]
             assert dialogs
             for w in dialogs:w.destroy()
+            history=app.history_dialog();app.update();assert history.winfo_exists();history.destroy()
             app.settings_dialog();app.update()
             dialogs=[w for w in app.winfo_children() if isinstance(w,tk.Toplevel)]
             assert dialogs
