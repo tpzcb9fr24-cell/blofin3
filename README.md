@@ -1,6 +1,10 @@
 # 0.3.1 entry diagnostics and bounded quote retry
 
-Windows installer verification pending for this candidate.
+Windows Server 2022 verification passed: 66 tests, genuine crypto/model checks, source/frozen/installed GUI checks (including the history dialog), and updater journal/model preservation. Interactive Windows 11 and live ETF acceptance remain outstanding.
+
+[Download 0.3.1 updater](https://github.com/tpzcb9fr24-cell/blofin3/releases/download/observer-7/BloFinObserver-Update.exe) | [Full 0.3.1 installer](https://github.com/tpzcb9fr24-cell/blofin3/releases/download/observer-7/BloFinObserver-Setup.exe) | [Successful build](https://github.com/tpzcb9fr24-cell/blofin3/actions/runs/40087761196).
+
+Updater SHA256: `0ac5d3599bf846644efcffb4c84950c6538e5246f69e14d953a09a31c949d40f`. Source: `c8af7d2addacbfa143fd53c747d86b94732a5d5f`.
 
 - Signals & evidence → Decision history — last 12 hours → Copy report.
 - Entry outcomes persist in SQLite: waiting for quotes/models, expired, stop/target/risk/model rejection, existing position and opened paper trade. Read-only feed/transport errors persist across restarts.
