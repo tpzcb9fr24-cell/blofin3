@@ -1,6 +1,6 @@
 # 0.3.2 direction-only paper comparison
 
-Windows installer verification pending.
+Windows installer verification BLOCKED: build observer-8 and its retry stopped at the native live-data gate. BloFin returned earlier BTC candles with confirm=0, leaving gaps in confirmed history. The gate remains enforced; bars are not fabricated or promoted to confirmed. No 0.3.2 updater has been published. Local tests: 71 passed, one Windows-only test skipped. Source implementation is a candidate, not a verified Windows release.
 
 Each accepted new original paper entry attempts a paired `[FLIP]` entry in a separate track: long becomes short; short becomes long. It copies original quantity, entry timestamp, configured costs, stop-distance percentage and target-distance percentage. A 2R plan remains 2R. Crypto uses the opposite side of the same observed bid/ask quote; ETF prices remain indicative. The stop and target distances are mirrored around the flipped fill, never swapped. Models and opposing-order-block target gates still determine the original signal; they are not reapplied in the opposite direction. This is an explicit direction-only experiment, not an alternative SMC detector. The original tracks and old history are retained. Old trades are never backfilled into the live ledger.
 

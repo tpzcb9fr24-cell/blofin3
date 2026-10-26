@@ -12,7 +12,7 @@ def run():
     started=time.monotonic()
     for symbol in SYMBOLS:
         bars=history(symbol);closed=[c for c in bars if c.confirmed]
-        assert len(closed)>=60 and contiguous(closed),symbol+' invalid history'
+        assert len(closed)>=60 and contiguous(closed),symbol+' invalid history: '+json.dumps({'bars':len(bars),'closed':len(closed),'gaps':[(a.time,b.time) for a,b in zip(closed,closed[1:]) if b.time-a.time!=300000][:10]})
         assert 0<=time.time()*1000-closed[-1].end<600000,symbol+' stale history'
         ticker=quote(symbol)
         result['history'][symbol]={'bars':len(bars),'last_confirmed':closed[-1].end,'bid':ticker['bid'],'ask':ticker['ask']}
