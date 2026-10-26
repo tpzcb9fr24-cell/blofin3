@@ -1,5 +1,5 @@
 #define AppName "BloFin Live Observer"
-#define AppVersion "0.3.1"
+#define AppVersion "0.3.2"
 #define AppExe "BloFinObserver.exe"
 [Setup]
 AppId={{D8A37A12-8F25-45E9-91E4-10B3D25F2A6E}

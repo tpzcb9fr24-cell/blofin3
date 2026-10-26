@@ -11,7 +11,9 @@ from .store import Store
 from .models import Models, agrees
 from .transport import public_socket,transport_name,MarketHTTPError
 
-TRACKS=tuple(name+suffix for name in ('SMC Trendline','SMC EMA50') for suffix in ('',' + Kronos',' + TimesFM',' + both'))+('Fibonacci','Fibonacci + SMC + both')
+BASE_TRACKS=tuple(name+suffix for name in ('SMC Trendline','SMC EMA50') for suffix in ('',' + Kronos',' + TimesFM',' + both'))+('Fibonacci','Fibonacci + SMC + both')
+from .direction_flip import flip_plan,SUFFIX
+TRACKS=tuple(t for base in BASE_TRACKS for t in (base,base+SUFFIX))
 
 class Engine:
     def __init__(self,path,events):
@@ -221,10 +223,28 @@ class Engine:
                         pending['entered'].add(track);continue
                     trade_id=store.open_trade(track,symbol,s.side,int(time.time()*1000),price,stop,decision.target,
                                      s.reason+'; '+note+'; indicative fill '+json.dumps(live_quote)+'; TP evidence '+json.dumps(asdict(decision))+'; model gating as-of '+str(asof),cost_pct=cost,quantity=quantity,policy=POLICY if cfg.quality_policy else 'legacy-v1',setup_key=f'{symbol}:{asof}:{s.side}')
+                    if trade_id:
+                        try:self.open_flip(store,trade_id,live_quote,asof)
+                        except Exception as exc:
+                            store.entry_attempt(symbol,asof,track+SUFFIX,'FLIP_ERROR',str(exc)[:450],{'original_trade_id':trade_id})
+                            self.emit('error',message='Paired flip unavailable: '+str(exc)[:450])
                     store.entry_attempt(symbol,asof,track,'OPENED' if trade_id else 'EXISTING_POSITION', 'Paper trade recorded' if trade_id else 'Existing position or duplicate entry',{'trade_id':trade_id,'price':price,'stop':stop,'target':decision.target,'quantity':quantity})
                 else:
                     store.entry_attempt(symbol,asof,track,'REJECTED_TARGET',decision.reason,{'price':price,'stop':stop,'target_decision':asdict(decision)})
                 pending['entered'].add(track)
+
+    def open_flip(self,store,original_id,live_quote,asof):
+        original=dict(store.db.execute('SELECT * FROM trades WHERE id=?',(original_id,)).fetchone())
+        track=original['track']+SUFFIX
+        # Same observed quote and entry decision. Cross the opposite side of its spread.
+        price=live_quote['price'] if original['symbol'] in ETF_SYMBOLS else live_quote['bid'] if original['side']=='long' else live_quote['ask']
+        plan=flip_plan(original['side'],original['entry'],original['stop'],original['target'],price)
+        trade_id=store.open_trade(track,original['symbol'],plan['side'],original['opened'],plan['entry'],plan['stop'],plan['target'],
+                     'DIRECTION-ONLY FLIP of original trade '+str(original_id)+'; same quantity, stop/target percentage distances and costs. No new model/OB gating. Original setup '+original['setup_key'],
+                     quantity=original['quantity'],cost_pct=original['cost_pct'],policy=original['policy'],setup_key=original['setup_key'])
+        store.entry_attempt(original['symbol'],asof,track,'OPENED' if trade_id else 'EXISTING_POSITION',
+                            'Direction-only flipped paper trade' if trade_id else 'Previous flipped position still open; no stacked position',
+                            {'original_trade_id':original_id,'trade_id':trade_id,'plan':plan,'quantity':original['quantity'],'cost_pct':original['cost_pct']})
 
     def paper_exits(self,store,symbol,c):
         for trade in store.trades():

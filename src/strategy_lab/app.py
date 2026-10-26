@@ -8,7 +8,7 @@ import tkinter as tk
 from datetime import datetime, timezone
 from pathlib import Path
 from tkinter import ttk, messagebox
-from dataclasses import asdict
+from dataclasses import asdict,replace
 from .engine import Engine, TRACKS
 from .market import SYMBOLS,ETF_SYMBOLS,CRYPTO_SYMBOLS
 from .store import Store, net_return
@@ -109,8 +109,10 @@ class App(tk.Tk):
         self.policy_filter=tk.StringVar(value='All policies')
         policies=ttk.Combobox(filters,textvariable=self.policy_filter,values=('All policies','quality-v2','legacy-v1'),state='readonly',width=15)
         policies.pack(side='left',padx=8);policies.bind('<<ComboboxSelected>>',lambda e:self.render_trades(self.rows))
+        ttk.Label(compare,text='Each original track is followed by its [FLIP] comparison. Flip copies original sizing; no independent optimization or new model/OB gate.').pack(anchor='w',pady=4)
         self.summary=self.table(compare,('track','closed','open','win','avg_$per100','net','unrealized','profit_factor','net_R','expect_R','max_DD'),(260,65,65,70,140,100,110,100,85,85,90))
         ttk.Label(compare,text='Avg $per100 = average closed net P/L per $100 of position value, not account growth. Open P/L estimates exit costs. Funding/ETF borrow excluded. Policy filter applies to paper records; manual records use asset/time filters only.').pack(anchor='w',padx=8,pady=5)
+        ttk.Label(journal,text='[FLIP] = opposite direction of an accepted original entry; same size, stop/target percentage distances and costs. Separate paper track; original results retained.',wraplength=1300).pack(anchor='w',pady=4)
         self.manual_panel(journal)
         self.trades=self.table(journal,('id','track','symbol','side','time','net','$per100','entry','stop','target','exit','size','P/L_$','policy','setup_id'),(45,190,100,65,165,90,115,95,95,95,95,110,110,120,250))
         self.match=tk.StringVar(value='Select Alyssa’s journal row to compare nearest paper entries within +/-5 minutes for the same symbol.')
@@ -475,6 +477,12 @@ class App(tk.Tk):
                 if names and not all(agrees(self.models.get((symbol,n),{}).get('forecast'),signal.side,signal.entry,signal.time) for n in names):
                     state='WAIT / MODEL DISAGREES'
             if not signal and latest and latest['closed'] is not None:state='CLOSED / NO NEW SIGNAL'
+            if track.endswith(' [FLIP]'):
+                if signal:
+                    from .direction_flip import flip_plan
+                    plan=flip_plan(signal.side,signal.entry,signal.stop,signal.target)
+                    signal=replace(signal,**plan)
+                if not opened:state='FLIP / '+state
             row=opened
             self.decisions.insert('','end',values=(track,state,row['side'] if row else signal.side if signal else '-',stamp(row['opened']) if row else stamp(signal.time) if signal else '-',f'{row["entry"]:.4f}' if row else f'{signal.entry:.4f}' if signal else '-',f'{row["stop"]:.4f}' if row else f'{signal.stop:.4f}' if signal else '-',f'{row["target"]:.4f}' if row else f'{signal.target:.4f}' if signal else '-',f'{abs(row["target"]-row["entry"])/abs(row["entry"]-row["stop"]):.2f}' if row else f'{signal.rr:.2f}' if signal else '-'))
         text=json.dumps({'checks':notes.get('checks',{}),'target_decisions':notes.get('target_decisions',[]),'quality_checks':notes.get('quality_checks',[]),'note':'All entries here are paper only. False checks explain NO SIGNAL.'},indent=2)
@@ -531,6 +539,11 @@ def main():
             app.store.close_trade(fixture,100.42,1000,'fixture',.0015)
             app.render_trades(app.store.trades())
             assert app.trades.set(str(fixture),'$per100')=='+$0.270'
+            flipped=dict(next(r for r in app.store.trades() if r['id']==fixture));flipped['id']=999;flipped['track']='Fibonacci [FLIP]';flipped['side']='short'
+            app.render_trades(app.store.trades()+[flipped])
+            assert app.trades.set('999','track')=='Fibonacci [FLIP]'
+            assert any(app.summary.item(i,'values')[0]=='Fibonacci [FLIP]' for i in app.summary.get_children())
+            app.render_trades(app.store.trades())
             legacy=app.store.open_trade('Fibonacci','QQQ','long',0,100,99,102,'Legacy normalized fixture')
             app.store.close_trade(legacy,102,1000,'fixture',.0015)
             app.render_trades(app.store.trades())
