@@ -12,7 +12,7 @@ from .models import Models, agrees
 from .transport import public_socket,transport_name,MarketHTTPError
 
 BASE_TRACKS=tuple(name+suffix for name in ('SMC Trendline','SMC EMA50') for suffix in ('',' + Kronos',' + TimesFM',' + both'))+('Fibonacci','Fibonacci + SMC + both')
-from .direction_flip import flip_plan,SUFFIX
+from .direction_flip import flip_plan,SUFFIX,routed_track,keep_original
 TRACKS=tuple(t for base in BASE_TRACKS for t in (base,base+SUFFIX))
 
 class Engine:
@@ -160,12 +160,13 @@ class Engine:
             elif any(x.side==s.side for x in smc):
                 tracks.append('Fibonacci + SMC + both')
             for track in tracks:
+                execution_track=routed_track(track,symbol,s.side)
                 if track in pending['entered']:continue
                 names=('Kronos','TimesFM') if 'both' in track else ('Kronos',) if 'Kronos' in track else ('TimesFM',) if 'TimesFM' in track else ()
                 if not all(agrees(self.forecasts.get((symbol,name)),s.side,s.entry,asof) for name in names):
-                    previous=store.db.execute('SELECT state FROM entry_attempts WHERE symbol=? AND asof=? AND track=?',(symbol,asof,track)).fetchone()
+                    previous=store.db.execute('SELECT state FROM entry_attempts WHERE symbol=? AND asof=? AND track=?',(symbol,asof,execution_track)).fetchone()
                     if not previous or previous['state']!='WAITING_MODEL':
-                        store.entry_attempt(symbol,asof,track,'WAITING_MODEL','Waiting for same-candle model agreement')
+                        store.entry_attempt(symbol,asof,execution_track,'WAITING_MODEL','Waiting for same-candle model agreement')
                     continue
                 if time.time()<self.quote_retry.get(symbol,0):continue
                 # Fill at the latest observed price, not retrospectively at model-input close.
@@ -186,17 +187,17 @@ class Engine:
                     self.emit('error',message='Paper entry skipped: no fresh bid/ask: '+str(exc))
                     delay=60 if getattr(exc,'status',None)==403 else 5
                     self.quote_retry[symbol]=time.time()+delay
-                    store.entry_attempt(symbol,asof,track,'WAITING_QUOTE','Fresh price unavailable; retry only within original 90-second window',{'error':str(exc)[:450],'retry_seconds':delay,'http_status':getattr(exc,'status',None)})
+                    store.entry_attempt(symbol,asof,execution_track,'WAITING_QUOTE','Fresh price unavailable; retry only within original 90-second window',{'error':str(exc)[:450],'retry_seconds':delay,'http_status':getattr(exc,'status',None)})
                     continue
                 if time.time()*1000-asof>90_000:
-                    store.entry_attempt(symbol,asof,track,'EXPIRED','Quote request finished after the 90-second entry window')
+                    store.entry_attempt(symbol,asof,execution_track,'EXPIRED','Quote request finished after the 90-second entry window')
                     pending['entered'].add(track);continue
                 # Cross displayed spread; residual slippage is included in cost_pct.
                 price=live_quote['price'] if symbol in ETF_SYMBOLS else live_quote['ask'] if s.side=='long' else live_quote['bid']
                 names=('Kronos','TimesFM') if 'both' in track else ('Kronos',) if 'Kronos' in track else ('TimesFM',) if 'TimesFM' in track else ()
                 if not all(agrees(self.forecasts.get((symbol,name)),s.side,price,asof) for name in names):
-                    store.entry_attempt(symbol,asof,track,'REJECTED_MODEL','Model direction no longer agrees at observed fill',{'price':price})
-                    self.emit('risk',message=track+' '+symbol+': model direction no longer agrees at observed fill')
+                    store.entry_attempt(symbol,asof,execution_track,'REJECTED_MODEL','Model direction no longer agrees at observed fill',{'price':price})
+                    self.emit('risk',message=execution_track+' '+symbol+': model direction no longer agrees at observed fill')
                     pending['entered'].add(track);continue
                 cfg=self.settings
                 from .targets import choose_target
@@ -210,41 +211,39 @@ class Engine:
                 from .risk import structural_stop,size_entry,POLICY
                 stop=structural_stop(closed,s.side,price,cfg) if cfg.quality_policy else price*(1-cfg.stop_pct if s.side=='long' else 1+cfg.stop_pct)
                 if stop is None:
-                    store.entry_attempt(symbol,asof,track,'REJECTED_STOP','No valid structure stop within maximum distance',{'price':price})
-                    self.emit('risk',message=track+' '+symbol+': no valid structure stop within maximum distance')
+                    store.entry_attempt(symbol,asof,execution_track,'REJECTED_STOP','No valid structure stop within maximum distance',{'price':price})
+                    self.emit('risk',message=execution_track+' '+symbol+': no valid structure stop within maximum distance')
                     pending['entered'].add(track);continue
                 cost=cfg.equity_cost_pct if symbol in ETF_SYMBOLS else cfg.cost_pct
                 decision=choose_target(entry=price,stop=stop,side=s.side,blocks=blocks,as_of=int(time.time()*1000),desired_rr=cfg.rr,buffer_pct=cfg.buffer_pct,roundtrip_cost_pct=cost,min_net_rr=cfg.min_net_rr if cfg.quality_policy else 0)
                 if decision.accepted:
-                    quantity,note=size_entry(store.trades(),track,symbol,s.side,price,stop,cost,int(time.time()*1000),cfg) if cfg.quality_policy else (1,'legacy size')
+                    quantity,note=size_entry(store.trades(),execution_track,symbol,s.side,price,stop,cost,int(time.time()*1000),cfg) if cfg.quality_policy else (1,'legacy size')
                     if quantity is None:
-                        store.entry_attempt(symbol,asof,track,'REJECTED_RISK',note,{'price':price,'stop':stop})
-                        self.emit('risk',message=track+' '+symbol+': skipped: '+note)
+                        store.entry_attempt(symbol,asof,execution_track,'REJECTED_RISK',note,{'price':price,'stop':stop})
+                        self.emit('risk',message=execution_track+' '+symbol+': skipped: '+note)
                         pending['entered'].add(track);continue
-                    trade_id=store.open_trade(track,symbol,s.side,int(time.time()*1000),price,stop,decision.target,
-                                     s.reason+'; '+note+'; indicative fill '+json.dumps(live_quote)+'; TP evidence '+json.dumps(asdict(decision))+'; model gating as-of '+str(asof),cost_pct=cost,quantity=quantity,policy=POLICY if cfg.quality_policy else 'legacy-v1',setup_key=f'{symbol}:{asof}:{s.side}')
-                    if trade_id:
-                        try:self.open_flip(store,trade_id,live_quote,asof)
-                        except Exception as exc:
-                            store.entry_attempt(symbol,asof,track+SUFFIX,'FLIP_ERROR',str(exc)[:450],{'original_trade_id':trade_id})
-                            self.emit('error',message='Paired flip unavailable: '+str(exc)[:450])
-                    store.entry_attempt(symbol,asof,track,'OPENED' if trade_id else 'EXISTING_POSITION', 'Paper trade recorded' if trade_id else 'Existing position or duplicate entry',{'trade_id':trade_id,'price':price,'stop':stop,'target':decision.target,'quantity':quantity})
+                    reason=s.reason+'; '+note+'; indicative fill '+json.dumps(live_quote)+'; original TP evidence '+json.dumps(asdict(decision))+'; model gating as-of '+str(asof)
+                    self.open_routed(store,track,symbol,s.side,price,stop,decision.target,cost,quantity,reason,live_quote,asof,int(time.time()*1000),POLICY if cfg.quality_policy else 'legacy-v1')
                 else:
-                    store.entry_attempt(symbol,asof,track,'REJECTED_TARGET',decision.reason,{'price':price,'stop':stop,'target_decision':asdict(decision)})
+                    store.entry_attempt(symbol,asof,execution_track,'REJECTED_TARGET',decision.reason,{'price':price,'stop':stop,'target_decision':asdict(decision)})
                 pending['entered'].add(track)
 
-    def open_flip(self,store,original_id,live_quote,asof):
-        original=dict(store.db.execute('SELECT * FROM trades WHERE id=?',(original_id,)).fetchone())
-        track=original['track']+SUFFIX
-        # Same observed quote and entry decision. Cross the opposite side of its spread.
-        price=live_quote['price'] if original['symbol'] in ETF_SYMBOLS else live_quote['bid'] if original['side']=='long' else live_quote['ask']
-        plan=flip_plan(original['side'],original['entry'],original['stop'],original['target'],price)
-        trade_id=store.open_trade(track,original['symbol'],plan['side'],original['opened'],plan['entry'],plan['stop'],plan['target'],
-                     'DIRECTION-ONLY FLIP of original trade '+str(original_id)+'; same quantity, stop/target percentage distances and costs. No new model/OB gating. Original setup '+original['setup_key'],
-                     quantity=original['quantity'],cost_pct=original['cost_pct'],policy=original['policy'],setup_key=original['setup_key'])
-        store.entry_attempt(original['symbol'],asof,track,'OPENED' if trade_id else 'EXISTING_POSITION',
-                            'Direction-only flipped paper trade' if trade_id else 'Previous flipped position still open; no stacked position',
-                            {'original_trade_id':original_id,'trade_id':trade_id,'plan':plan,'quantity':original['quantity'],'cost_pct':original['cost_pct']})
+    def open_routed(self,store,track,symbol,side,entry,stop,target,cost,quantity,reason,live_quote,asof,opened,policy):
+        execution_track=routed_track(track,symbol,side)
+        exempt=keep_original(track,symbol,side)
+        if exempt:
+            plan={'side':side,'entry':entry,'stop':stop,'target':target}
+            mode='ETH_FIB_SHORT_EXCEPTION: original direction and levels retained'
+        else:
+            price=live_quote['price'] if symbol in ETF_SYMBOLS else live_quote['bid'] if side=='long' else live_quote['ask']
+            plan=flip_plan(side,entry,stop,target,price)
+            mode='FLIP_ONLY: opposite direction; original stop/target percentage distances retained'
+        trade_id=store.open_trade(execution_track,symbol,plan['side'],opened,plan['entry'],plan['stop'],plan['target'],
+                     mode+'; original signal '+side+'; '+reason,quantity=quantity,cost_pct=cost,policy=policy,setup_key=f'{symbol}:{asof}:{side}')
+        store.entry_attempt(symbol,asof,execution_track,'OPENED' if trade_id else 'EXISTING_POSITION',
+                            mode if trade_id else 'Existing position or duplicate in routed track; no stacked position',
+                            {'trade_id':trade_id,'original_signal':side,'plan':plan,'quantity':quantity,'cost_pct':cost})
+        return trade_id
 
     def paper_exits(self,store,symbol,c):
         for trade in store.trades():

@@ -14,6 +14,7 @@ from .market import SYMBOLS,ETF_SYMBOLS,CRYPTO_SYMBOLS
 from .store import Store, net_return
 from .strategies import Settings
 from .metrics import trade_metrics
+from .direction_flip import keep_original,routed_track,visible_active,SUFFIX
 
 
 def report_error(title,message,**kwargs):
@@ -75,6 +76,7 @@ class App(tk.Tk):
         box.pack(side='left');box.bind('<<ComboboxSelected>>',lambda e:(self.render_chart(),self.render_trades(self.rows)))
         self.prices=tk.StringVar(value='Connecting to BloFin public data...')
         ttk.Label(self.content,textvariable=self.prices,font=('Segoe UI',11,'bold'),wraplength=1320).pack(anchor='w',padx=18,pady=3)
+        ttk.Button(header,text='OPEN POSITIONS',command=self.show_open_positions).pack(side='left',padx=8)
         ttk.Button(header,text='Strategy settings / rules',command=self.settings_dialog).pack(side='right')
         ttk.Button(header,text='SPY / QQQ data setup',command=self.stock_setup).pack(side='right',padx=6)
         self.chart_visible=True
@@ -88,7 +90,13 @@ class App(tk.Tk):
         self.model_status=tk.StringVar(value='Models: waiting for fresh confirmed candle; packaged CPU inference')
         ttk.Label(self.content,textvariable=self.model_status,wraplength=1380,foreground='#93c5fd').pack(anchor='w',padx=18,pady=4)
         self.notebook=notebook=ttk.Notebook(self.content);notebook.pack(fill='both',expand=True,padx=18,pady=5)
+        self.open_tab=ttk.Frame(notebook);notebook.add(self.open_tab,text='Open positions')
+        ttk.Label(self.open_tab,text='ALL currently open positions across all markets. Earlier-version positions continue unchanged until exit. Missing current prices show UNPRICED.',wraplength=1300).pack(anchor='w',pady=5)
+        self.open_count=tk.StringVar(value='No open positions')
+        ttk.Label(self.open_tab,textvariable=self.open_count,font=('Segoe UI',11,'bold')).pack(anchor='w',pady=4)
+        self.open_positions=self.table(self.open_tab,('track','symbol','side','entry','current','stop','target','remaining','net','$per100','P/L_$','role'),(290,100,70,110,110,110,110,110,100,110,110,190))
         compare=ttk.Frame(notebook);journal=ttk.Frame(notebook);audit=ttk.Frame(notebook)
+        self.journal_tab=journal
         notebook.add(compare,text='Side-by-side performance');notebook.add(journal,text='Trade journal & manual comparison');notebook.add(audit,text='Connection & inference log')
         decisions=ttk.Frame(notebook);notebook.add(decisions,text='Signals & evidence')
         ttk.Button(decisions,text='Decision history — last 12 hours',command=self.history_dialog).pack(anchor='w',pady=5)
@@ -109,10 +117,12 @@ class App(tk.Tk):
         self.policy_filter=tk.StringVar(value='All policies')
         policies=ttk.Combobox(filters,textvariable=self.policy_filter,values=('All policies','quality-v2','legacy-v1'),state='readonly',width=15)
         policies.pack(side='left',padx=8);policies.bind('<<ComboboxSelected>>',lambda e:self.render_trades(self.rows))
-        ttk.Label(compare,text='Each original track is followed by its [FLIP] comparison. Flip copies original sizing; no independent optimization or new model/OB gate.').pack(anchor='w',pady=4)
+        ttk.Label(compare,text='FLIP-ONLY for new entries. Exception: ETH-USDT plain Fibonacci SHORT stays unchanged. No paired originals are created.').pack(anchor='w',pady=4)
         self.summary=self.table(compare,('track','closed','open','win','avg_$per100','net','unrealized','profit_factor','net_R','expect_R','max_DD'),(260,65,65,70,140,100,110,100,85,85,90))
         ttk.Label(compare,text='Avg $per100 = average closed net P/L per $100 of position value, not account growth. Open P/L estimates exit costs. Funding/ETF borrow excluded. Policy filter applies to paper records; manual records use asset/time filters only.').pack(anchor='w',padx=8,pady=5)
-        ttk.Label(journal,text='[FLIP] = opposite direction of an accepted original entry; same size, stop/target percentage distances and costs. Separate paper track; original results retained.',wraplength=1300).pack(anchor='w',pady=4)
+        ttk.Label(journal,text='NEW ENTRIES: flip-only; ETH-USDT plain Fibonacci SHORT is the exception. Earlier trades remain unchanged. Open positions tab always shows ALL open positions.',wraplength=1300).pack(anchor='w',pady=4)
+        self.show_originals=tk.BooleanVar(value=False)
+        ttk.Checkbutton(journal,text='Show earlier original history in journal and performance',variable=self.show_originals,command=lambda:self.render_trades(self.rows)).pack(anchor='w',pady=3)
         self.manual_panel(journal)
         self.trades=self.table(journal,('id','track','symbol','side','time','net','$per100','entry','stop','target','exit','size','P/L_$','policy','setup_id'),(45,190,100,65,165,90,115,95,95,95,95,110,110,120,250))
         self.match=tk.StringVar(value='Select Alyssa’s journal row to compare nearest paper entries within +/-5 minutes for the same symbol.')
@@ -120,15 +130,22 @@ class App(tk.Tk):
         self.trades.bind('<<TreeviewSelect>>',self.show_match)
         self.log=tk.Text(audit,bg='#0b1220',fg='#d1d5db',height=8,state='disabled');self.log.pack(fill='both',expand=True)
         accounts=ttk.Frame(notebook);notebook.add(accounts,text='Paper accounts / risk')
-        ttk.Label(accounts,text='QUALITY-V2 ONLY: independent $10,000 default paper accounts per strategy; never add these accounts together. All five symbols share each strategy account.',wraplength=1300).pack(anchor='w',pady=5)
+        ttk.Label(accounts,text='QUALITY-V2 ONLY: independent $10,000 default paper accounts per strategy; never add these accounts together. All five symbols share each strategy account. Balances include complete track history, even when earlier originals are hidden.',wraplength=1300).pack(anchor='w',pady=5)
         self.account_table=self.table(accounts,('track','equity_$','open_P/L_$','marked_equity_$','$per100_account','open_risk_$','closed_DD_$','dollar_PF'),(260,150,150,170,180,140,140,100))
         ttk.Label(accounts,text='Experimental defaults: 0.25% risk per entry, 1% total open risk, 0.5% per correlated group, 1% of initial equity UTC-day new-entry stop. Unlevered exposure. Gap losses can exceed budgets.\nLegacy trades are excluded from these new account balances. Fees/slippage are estimates; funding, ETF borrow/dividends excluded.',wraplength=1300).pack(anchor='w',pady=5)
         self.status=tk.StringVar(value='Starting...')
         self.status_label=ttk.Label(self.content,textvariable=self.status,wraplength=1400)
         self.status_label.pack(anchor='w',padx=18,pady=8)
         self.protocol('WM_DELETE_WINDOW',self.shutdown)
-        if start:self.engine.start()
+        self.render_trades(self.store.trades())
+        if start:
+            self.engine.start();self.show_open_positions()
         self.after(300,self.drain)
+
+    def show_open_positions(self):
+        self.notebook.select(self.open_tab)
+        if self.chart_visible:self.toggle_chart()
+        self.viewport.yview_moveto(0)
 
     def history_dialog(self):
         from tkinter.scrolledtext import ScrolledText
@@ -182,7 +199,7 @@ class App(tk.Tk):
         for scale in (1.0,1.5,2.0):
             self.tk.call('tk','scaling',original_scale*scale)
             self.geometry('1024x640');self.update()
-            self.notebook.select(1);self.update()
+            self.notebook.select(self.journal_tab);self.update()
             self.page_configured();self.update()
             assert self.trades.winfo_height()>=200, 'Journal rows were squeezed out'
             assert self.viewport.yview()[1]<1, 'Missing vertical page overflow'
@@ -200,7 +217,7 @@ class App(tk.Tk):
                 assert self.notebook.nametowidget(self.notebook.select()).winfo_ismapped()
             results.append({'window':'1024x640','relative_scale':scale,'journal_height':self.trades.winfo_height(),'bottom_reachable':True,'chart_toggle':True})
         self.tk.call('tk','scaling',original_scale)
-        self.notebook.select(1);self.geometry('640x480');self.update()
+        self.notebook.select(self.journal_tab);self.geometry('640x480');self.update()
         self.viewport.yview_moveto(1);self.update()
         assert self.trades.winfo_height()>=200
         Path('layout-smoke.json').write_text(json.dumps(results,indent=2))
@@ -466,7 +483,9 @@ class App(tk.Tk):
         for item in self.decisions.get_children():self.decisions.delete(item)
         for track in TRACKS:
             base='SMC Trendline' if track.startswith('SMC Trendline') else 'SMC EMA50' if track.startswith('SMC EMA50') else 'Fibonacci'
+            if not track.endswith(SUFFIX) and not (symbol=='ETH-USDT' and track=='Fibonacci'):continue
             signal=next((s for s in signals if s.strategy==base),None)
+            if signal and routed_track(track[:-len(SUFFIX)] if track.endswith(SUFFIX) else track,symbol,signal.side)!=track:signal=None
             opened=next((t for t in self.rows if t['track']==track and t['symbol']==symbol and t['closed'] is None),None)
             latest=next((t for t in self.rows if t['track']==track and t['symbol']==symbol),None)
             state='OPEN PAPER' if opened else 'NO SIGNAL'
@@ -495,19 +514,29 @@ class App(tk.Tk):
         self.rows=rows;selected=self.trades.selection()
         prices={s:bars[-1].close for s,bars in self.market.items()}
         for item in self.trades.get_children():self.trades.delete(item)
-        for row in rows[:500]:
+        visible_rows=rows if self.show_originals.get() else [r for r in rows if visible_active(r)]
+        for row in visible_rows[:500]:
             exit=row['exit'];price=(exit if row['closed'] is not None else None) or prices.get(row['symbol'],row['entry'])
             net=net_return(row,price);dollars=net*row['entry']*row['quantity'];priced=row['closed'] is not None or row['symbol'] in prices
             sized=row['source']=='manual' or row.get('policy')=='quality-v2'
             self.trades.insert('','end',iid=str(row['id']),values=(row['id'],row['track'],row['symbol'],row['side'],stamp(row['opened']),f'{net*100:+.3f}%' if priced else 'UNPRICED',money(net*100) if priced else 'UNPRICED',f'{row["entry"]:.3f}',f'{row["stop"]:.3f}',f'{row["target"]:.3f}',f'{exit:.3f}' if exit else 'OPEN',f'{row["quantity"]:.6f}' if sized else 'NORMALIZED',money(dollars,2) if sized and priced else 'UNPRICED' if sized else 'N/A normalized',row.get('policy','legacy-v1'),row.get('setup_key','')))
         if selected and self.trades.exists(selected[0]):self.trades.selection_set(selected)
+        for item in self.open_positions.get_children():self.open_positions.delete(item)
+        opened=[r for r in rows if r['closed'] is None]
+        self.open_count.set(f'{len(opened)} open position(s) — paper simulations / manually recorded fills')
+        for row in opened:
+            price=prices.get(row['symbol']);net=net_return(row,price) if price is not None else None
+            role='Manual journal' if row['source']=='manual' else 'Flip' if row['track'].endswith(SUFFIX) else 'ETH Fibonacci short exception' if keep_original(row['track'],row['symbol'],row['side']) else 'Earlier original (retained)'
+            sized=row['source']=='manual' or row.get('policy')=='quality-v2'
+            self.open_positions.insert('','end',iid=str(row['id']),values=(row['track'],row['symbol'],row['side'],f'{row["entry"]:.3f}',f'{price:.3f}' if price is not None else 'UNPRICED',f'{row["stop"]:.3f}',f'{row["target"]:.3f}',f'{row["remaining"]:.6f}',f'{net*100:+.3f}%' if net is not None else 'UNPRICED',money(net*100) if net is not None else 'UNPRICED',money(net*row['entry']*row['quantity'],2) if net is not None and sized else 'N/A normalized' if not sized else 'UNPRICED',role))
         for item in self.summary.get_children():self.summary.delete(item)
         for item in self.account_table.get_children():self.account_table.delete(item)
         for track in ('Alyssa manual',)+TRACKS:
+            if not self.show_originals.get() and track!='Alyssa manual' and not (track.endswith(SUFFIX) or track=='Fibonacci'):continue
             days={'All time':None,'Last 24 hours':1,'Last 7 days':7}[self.window.get()]
             since=0 if days is None else time.time()*1000-days*86400000
             selected_symbol=self.symbol.get() if self.asset_scope.get()=='Chart symbol' else self.asset_scope.get()
-            entries=[x for x in rows if x['track']==track and (selected_symbol=='All markets' or x['symbol']==selected_symbol) and x['opened']>=since and (x['source']=='manual' or self.policy_filter.get()=='All policies' or x.get('policy','legacy-v1')==self.policy_filter.get())]
+            entries=[x for x in visible_rows if x['track']==track and (selected_symbol=='All markets' or x['symbol']==selected_symbol) and x['opened']>=since and (x['source']=='manual' or self.policy_filter.get()=='All policies' or x.get('policy','legacy-v1')==self.policy_filter.get())]
             metrics=trade_metrics(entries,prices);average=metrics['average_dollars_per_100']
             self.summary.insert('','end',values=(track,metrics['closed'],metrics['open'],f'{metrics["wins"]/metrics["closed"]*100:.1f}%' if metrics['closed'] else '-',money(average) if average is not None else '-',f'{metrics["net"]*100:+.3f}%',f'{metrics["unrealized"]*100:+.3f}%' if not metrics['unpriced_open'] else 'UNPRICED',f'{metrics["profit_factor"]:.2f}' if metrics['profit_factor'] is not None else '-',f'{metrics["net_r"]:+.2f}',f'{metrics["expectancy_r"]:+.2f}' if metrics['expectancy_r'] is not None else '-',f'{metrics["max_drawdown"]*100:.3f}%'))
             if track!='Alyssa manual':
@@ -526,6 +555,7 @@ def main():
             app=App(Path(directory)/'test.db',start=False)
             app.update()
             app.verify_layout()
+            app.show_originals.set(True)
             app.fields['Entry'].set('100');app.fields['Stop'].set('99');app.fields['Target'].set('102');app.fields['Size'].set('2')
             app.manual_open();assert len(app.store.trades())==1
             row=app.store.trades()[0];app.trades.selection_set(str(row['id']))
@@ -543,7 +573,14 @@ def main():
             app.render_trades(app.store.trades()+[flipped])
             assert app.trades.set('999','track')=='Fibonacci [FLIP]'
             assert any(app.summary.item(i,'values')[0]=='Fibonacci [FLIP]' for i in app.summary.get_children())
-            app.render_trades(app.store.trades())
+            open_fixture=dict(flipped);open_fixture['id']=998;open_fixture['closed']=None;open_fixture['exit']=None;open_fixture['remaining']=1;open_fixture['realized']=0
+            older=dict(open_fixture);older['id']=997;older['track']='SMC EMA50'
+            app.render_trades(app.store.trades()+[open_fixture,older])
+            assert len(app.open_positions.get_children())==2
+            assert app.open_positions.set('997','role')=='Earlier original (retained)'
+            app.show_originals.set(False);app.render_trades(app.store.trades()+[open_fixture,older])
+            assert len(app.open_positions.get_children())==2 and not app.trades.exists('997')
+            app.show_originals.set(True);app.render_trades(app.store.trades())
             legacy=app.store.open_trade('Fibonacci','QQQ','long',0,100,99,102,'Legacy normalized fixture')
             app.store.close_trade(legacy,102,1000,'fixture',.0015)
             app.render_trades(app.store.trades())

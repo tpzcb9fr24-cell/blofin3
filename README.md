@@ -1,3 +1,11 @@
+# 0.3.3 flip-only routing and Open positions
+
+Windows installer verification pending.
+
+New paper entries now execute only the direction-only flip, except the exact combination `ETH-USDT` + plain `Fibonacci` + original `short` signal, which remains an original short with original entry, stop and target. ETH Fibonacci longs and the Fibonacci+SMC+both track are not exceptions. Original model, signal, stop/target and cost gates still determine the candidate. Stop/target percentage distances and costs are preserved; the existing sizing formula runs against the routed strategy account. No paired originals or shadow ledger entries are created.
+
+The Open positions tab is selected on startup with the chart hidden for space. The OPEN POSITIONS button returns there. It lists all still-open paper/manual records across markets, including earlier original positions, with side, entry, current mark, stop, target, remaining units and P/L. Existing positions continue unchanged until exit. Journal/performance defaults hide earlier original history except the ETH short exception; Show earlier original history reveals it. Account balances use complete track history so they agree with risk budgeting. No old trades are deleted, rewritten or force-closed. No real exchange orders. No profitability claim.
+
 # 0.3.2 direction-only paper comparison
 
 **0.3.2 prerelease verified on Windows Server 2022:** 73 tests passed; genuine offline Kronos/TimesFM inference, source/frozen/installed GUI, paired flip ledger/exits/restart, and updater journal/model-preservation checks passed with explicitly synthetic fixtures. Separately, real BloFin REST history, fresh bid/ask and public WebSocket checks PASSED for BTC/ETH/SOL at build time. This is not a profitability result or interactive Windows 11/live ETF acceptance.

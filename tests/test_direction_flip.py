@@ -33,23 +33,42 @@ def test_entry_candle_and_gaps_are_not_invented():
  assert replay_flip(t,[{'time':0,'open':100,'high':101.2,'low':99,'close':100}])['outcome']=='ENTRY_BAR_UNCERTAIN'
  assert replay_flip(t,[{'time':300000,'open':100,'high':100,'low':100,'close':100}])['outcome']=='MISSING_BARS'
 
-def test_live_pair_copies_original_size_cost_time_and_audits_overlap(tmp_path):
+@pytest.mark.parametrize('symbol,track,side,expected_side,expected_track',[
+ ('BTC-USDT','Fibonacci','long','short','Fibonacci [FLIP]'),
+ ('BTC-USDT','Fibonacci','short','long','Fibonacci [FLIP]'),
+ ('ETH-USDT','Fibonacci','short','short','Fibonacci'),
+ ('ETH-USDT','Fibonacci','long','short','Fibonacci [FLIP]'),
+ ('ETH-USDT','SMC EMA50','short','long','SMC EMA50 [FLIP]'),
+ ('ETH-USDT','Fibonacci + SMC + both','short','long','Fibonacci + SMC + both [FLIP]'),
+ ('SPY','Fibonacci','short','long','Fibonacci [FLIP]'),
+])
+def test_only_one_routed_entry_with_exact_eth_exception(tmp_path,symbol,track,side,expected_side,expected_track):
  from strategy_lab.engine import Engine
  from strategy_lab.store import Store
  import queue
  db=Store(tmp_path/'db');engine=Engine(tmp_path/'db',queue.Queue())
- original=db.open_trade('Fibonacci','BTC-USDT','long',1000,100,99,102,'fixture',quantity=2.5,cost_pct=.0015,policy='quality-v2',setup_key='fixture')
- quote={'bid':99.9,'ask':100}
- engine.open_flip(db,original,quote,1000)
- flip=next(t for t in db.trades() if t['track'].endswith('[FLIP]'))
- assert flip['side']=='short' and flip['entry']==99.9
- assert flip['opened']==1000 and flip['quantity']==2.5 and flip['cost_pct']==.0015
- assert abs(flip['stop']/flip['entry']-1)==pytest.approx(.01)
- assert abs(flip['target']/flip['entry']-1)==pytest.approx(.02)
- assert flip['setup_key']=='fixture'
- engine.open_flip(db,original,quote,1000)
- assert len(db.trades())==2
- assert db.db.execute("select state from entry_attempts where track like '%[FLIP]'").fetchone()[0]=='EXISTING_POSITION'
+ stop,target=(99,102) if side=='long' else (101,98)
+ quote={'bid':99.9,'ask':100,'price':100}
+ engine.open_routed(db,track,symbol,side,100,stop,target,.0015,2.5,'fixture',quote,1000,1001,'quality-v2')
+ rows=db.trades();assert len(rows)==1
+ row=rows[0];assert row['track']==expected_track and row['side']==expected_side
+ assert row['opened']==1001 and row['quantity']==2.5 and row['cost_pct']==.0015
+ assert abs(row['stop']/row['entry']-1)==pytest.approx(.01)
+ assert abs(row['target']/row['entry']-1)==pytest.approx(.02)
+ if expected_track=='Fibonacci':assert (row['entry'],row['stop'],row['target'])==(100,101,98)
+ before=dict(row)
+ engine.open_routed(db,track,symbol,side,100,stop,target,.0015,2.5,'fixture',quote,1000,1001,'quality-v2')
+ assert db.trades()==[before]
+ assert db.db.execute('select state from entry_attempts').fetchone()[0]=='EXISTING_POSITION'
+
+
+def test_all_open_positions_remain_visible_and_original_history_can_be_filtered():
+ from strategy_lab.direction_flip import visible_active
+ rows=[{'source':'paper','track':'SMC EMA50','symbol':'BTC-USDT','side':'long'},
+       {'source':'paper','track':'SMC EMA50 [FLIP]','symbol':'BTC-USDT','side':'short'},
+       {'source':'paper','track':'Fibonacci','symbol':'ETH-USDT','side':'short'},
+       {'source':'paper','track':'Fibonacci','symbol':'ETH-USDT','side':'long'}]
+ assert [visible_active(r) for r in rows]==[False,True,True,False]
 
 
 def test_live_provider_report_keeps_failure_explicit(tmp_path,monkeypatch):
@@ -63,3 +82,37 @@ def test_live_provider_report_keeps_failure_explicit(tmp_path,monkeypatch):
     assert json.loads(path.read_text())['status']=='BLOCKED'
     monkeypatch.setattr(probe,'run',lambda:{'fixture':'passed transport'})
     assert probe.report_status(path)['status']=='PASSED'
+
+
+def test_full_entry_pipeline_flips_once_and_keeps_eth_fibonacci_short(tmp_path,monkeypatch):
+ import queue
+ import strategy_lab.engine as module
+ from strategy_lab.engine import Engine
+ from strategy_lab.store import Store
+ from strategy_lab.market import Candle
+ from strategy_lab.strategies import Signal,Settings
+ asof=1792807200000
+ monkeypatch.setattr(module.time,'time',lambda:asof/1000+10)
+ monkeypatch.setattr(module,'quote',lambda s:{'bid':100,'ask':100,'time':asof+10000})
+ monkeypatch.setattr(module,'detect',lambda *a,**k:([],[],{}))
+ engine=Engine(tmp_path/'db',queue.Queue());engine.settings=Settings(quality_policy=0)
+ db=Store(tmp_path/'db')
+ for symbol in ('BTC-USDT','ETH-USDT'):
+  engine.bars[symbol]={asof-300000:Candle(asof-300000,100,101,99,100,10,1000)}
+  engine.pending[(symbol,asof)]={'signals':[Signal('Fibonacci','short',asof,100,101,98,'fixture',2)],'entered':set()}
+  engine.entries(db,symbol,asof);engine.entries(db,symbol,asof)
+ rows=db.trades();assert len(rows)==2
+ assert {(r['symbol'],r['track'],r['side']) for r in rows}=={('BTC-USDT','Fibonacci [FLIP]','long'),('ETH-USDT','Fibonacci','short')}
+ assert len(list(db.db.execute('select * from entry_attempts')))==2
+
+
+def test_existing_eth_short_record_is_not_modified_by_new_mode(tmp_path):
+ import queue
+ from strategy_lab.engine import Engine
+ from strategy_lab.store import Store
+ db=Store(tmp_path/'db');engine=Engine(tmp_path/'db',queue.Queue())
+ old=db.open_trade('Fibonacci','ETH-USDT','short',100,2000,2020,1960,'existing',quantity=2,cost_pct=.0015,policy='quality-v2')
+ before=next(r for r in db.trades() if r['id']==old)
+ engine.open_routed(db,'Fibonacci','BTC-USDT','long',100,99,102,.0015,2.5,'new',{'bid':99.9,'ask':100},1000,1001,'quality-v2')
+ assert next(r for r in db.trades() if r['id']==old)==before
+ assert len(db.trades())==2

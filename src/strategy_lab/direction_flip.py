@@ -3,6 +3,15 @@ import math
 
 SUFFIX=' [FLIP]'
 
+def keep_original(track,symbol,side):
+    return track=='Fibonacci' and symbol=='ETH-USDT' and side=='short'
+
+def routed_track(track,symbol,side):
+    return track if keep_original(track,symbol,side) else track+SUFFIX
+
+def visible_active(row):
+    return row['source']=='manual' or row['track'].endswith(SUFFIX) or keep_original(row['track'],row['symbol'],row['side'])
+
 def flip_plan(side,entry,stop,target,fill=None):
     if side not in ('long','short') or not all(math.isfinite(v) and v>0 for v in (entry,stop,target)):
         raise ValueError('Invalid original plan')

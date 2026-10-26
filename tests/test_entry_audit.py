@@ -32,8 +32,8 @@ def test_transient_quote_failure_retries_and_opens_once(setup,monkeypatch):
     engine.entries(db,'SOL-USDT',asof);assert len(calls)==1
     now[0]+=5;engine.entries(db,'SOL-USDT',asof)
     engine.entries(db,'SOL-USDT',asof)
-    assert len(db.trades())==2 and len(calls)==2
-    row=db.db.execute("select state,attempts from entry_attempts where track='Fibonacci'").fetchone()
+    assert len(db.trades())==1 and len(calls)==2
+    row=db.db.execute("select state,attempts from entry_attempts where track='Fibonacci [FLIP]'").fetchone()
     assert tuple(row)==('OPENED',2)
     engine.flush_events(db)
     assert db.db.execute("select count(*) from events where kind='error'").fetchone()[0]==1
@@ -85,7 +85,7 @@ def test_report_does_not_invent_historical_rejection(setup):
     report=decision_history(db,now=asof+1000)
     assert 'Base candidates 1' in report
     assert 'Signals without saved entry outcome: 1' in report and 'cause UNKNOWN' in report
-    db.entry_attempt('SOL-USDT',asof,'Fibonacci','EXPIRED','fixture reason')
+    db.entry_attempt('SOL-USDT',asof,'Fibonacci [FLIP]','EXPIRED','fixture reason')
     report=decision_history(db,now=asof+1000)
     assert 'Signals without saved entry outcome: 0' in report
     assert 'EXPIRED' in report and 'fixture reason' in report
@@ -101,7 +101,7 @@ def test_waiting_model_is_recorded_once_and_expires(setup,monkeypatch):
     assert len(waits)==3 and all(r[0]==1 for r in waits)
     now[0]=asof/1000+91;engine.entries(db,'SOL-USDT',asof)
     assert db.db.execute("select count(*) from entry_attempts where state='EXPIRED'").fetchone()[0]==3
-    assert len(db.trades())==2
+    assert len(db.trades())==1
 
 @pytest.mark.parametrize('outcome',['REJECTED_STOP','REJECTED_RISK'])
 def test_stop_and_budget_rejections_persist(setup,monkeypatch,outcome):

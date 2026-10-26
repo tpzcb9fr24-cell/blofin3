@@ -101,37 +101,38 @@ def offline_model_smoke():
 
 
 def offline_desktop_smoke():
-    """Installed GUI + real ledger/engine flip exits, synthetic prices, temporary DB only."""
+    """Installed GUI + routed-only flip/ETH exception, temporary synthetic ledger only."""
     import tempfile
     import math
     from .app import App
     from .store import Store
     from .market import Candle
+    from .strategies import Settings
     with tempfile.TemporaryDirectory() as folder:
         path=Path(folder)/'fixture-only.sqlite3';app=App(path,start=False)
-        from .strategies import Settings
         app.engine.settings=Settings()
         try:
             t=1793000000000//300000*300000
-            original=app.store.open_trade('Fibonacci','BTC-USDT','long',t+1,100,99,102,'OFFLINE FIXTURE ONLY',quantity=2.5,cost_pct=.0015,policy='quality-v2',setup_key='fixture-only')
-            app.engine.open_flip(app.store,original,{'bid':99.9,'ask':100},t)
-            rows=app.store.trades();flip=next(r for r in rows if r['track'].endswith('[FLIP]'))
-            assert flip['opened']==t+1 and flip['quantity']==2.5 and flip['side']=='short'
+            app.engine.open_routed(app.store,'Fibonacci','BTC-USDT','long',100,99,102,.0015,2.5,'OFFLINE FIXTURE ONLY',{'bid':99.9,'ask':100},t,t+1,'quality-v2')
+            app.engine.open_routed(app.store,'Fibonacci','ETH-USDT','short',100,101,98,.0015,3.5,'OFFLINE FIXTURE ONLY',{'bid':100,'ask':100.1},t,t+1,'quality-v2')
+            rows=app.store.trades();assert len(rows)==2
+            flip=next(r for r in rows if r['symbol']=='BTC-USDT');exception=next(r for r in rows if r['symbol']=='ETH-USDT')
+            assert flip['track']=='Fibonacci [FLIP]' and flip['side']=='short' and flip['quantity']==2.5
+            assert exception['track']=='Fibonacci' and exception['side']=='short' and exception['stop']==101 and exception['target']==98 and exception['quantity']==3.5
             assert math.isclose(abs(flip['stop']/flip['entry']-1),.01)
             assert math.isclose(abs(flip['target']/flip['entry']-1),.02)
-            # Flip can stop out first while the original remains open.
+            app.render_trades(rows);app.show_open_positions();app.update()
+            assert len(app.open_positions.get_children())==2 and not app.chart.winfo_ismapped()
             app.engine.paper_exits(app.store,'BTC-USDT',Candle(t+300000,100,101.1,99.5,101,10,1000))
-            rows=app.store.trades();assert next(r for r in rows if r['id']==original)['closed'] is None
-            assert next(r for r in rows if r['id']==flip['id'])['closed'] is not None
-            app.engine.paper_exits(app.store,'BTC-USDT',Candle(t+600000,101,102.2,100.5,102,10,1000))
+            app.render_trades(app.store.trades());app.update();assert len(app.open_positions.get_children())==1
+            app.engine.paper_exits(app.store,'ETH-USDT',Candle(t+600000,100,100.5,97.9,98,10,1000))
             rows=app.store.trades();assert all(r['closed'] is not None for r in rows)
-            app.render_trades(rows);app.update()
+            app.render_trades(rows);app.update();assert len(app.open_positions.get_children())==0
             assert app.trades.set(str(flip['id']),'track')=='Fibonacci [FLIP]'
-            assert any(app.summary.item(i,'values')[0]=='Fibonacci [FLIP]' for i in app.summary.get_children())
-            dialog=app.history_dialog();app.update();dialog.destroy()
-            result={'input_basis':'SYNTHETIC FIXTURE ONLY; NOT LIVE DATA','original_and_flip_recorded':True,
-                    'same_size_timestamp_costs_and_percentage_distances':True,'independent_engine_exits':True,
-                    'gui_flip_visible':True,'platform':__import__('platform').platform()}
+            assert app.trades.set(str(exception['id']),'side')=='short'
+            result={'input_basis':'SYNTHETIC FIXTURE ONLY; NOT LIVE DATA','one_direction_per_signal':True,
+                    'ETH_plain_Fibonacci_short_exception_unchanged':True,'open_positions_view_and_exits':True,
+                    'stop_target_percentage_distances_preserved':True,'platform':__import__('platform').platform()}
             app.shutdown();app=None
             db=Store(path);saved=db.trades();assert len(saved)==2 and all(r['closed'] is not None for r in saved);db.close()
             result['journal_survived_restart']=True

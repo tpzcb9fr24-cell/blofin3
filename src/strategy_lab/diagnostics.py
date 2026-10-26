@@ -39,7 +39,7 @@ def decision_history(store,now=None,hours=12):
     for r in rows:
         d=json.loads(r['payload'])
         for sig in d.get('signals',[]):
-            if not store.db.execute('SELECT 1 FROM entry_attempts WHERE symbol=? AND asof=? AND track=?',(r['symbol'],r['asof'],sig['strategy'])).fetchone():
+            if not store.db.execute('SELECT 1 FROM entry_attempts WHERE symbol=? AND asof=? AND track IN (?,?)',(r['symbol'],r['asof'],sig['strategy'],sig['strategy']+' [FLIP]')).fetchone():
                 unknown.append(f'{stamp(r["asof"])} {r["symbol"]} {sig["strategy"]}')
     lines += ['',f'Signals without saved entry outcome: {len(unknown)}. Older versions did not save these reasons; cause UNKNOWN.']+unknown[:100]
     events=list(store.db.execute('SELECT * FROM events WHERE time>? AND time<=? ORDER BY time DESC LIMIT 40',(start,now)))

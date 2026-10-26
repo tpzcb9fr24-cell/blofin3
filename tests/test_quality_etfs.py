@@ -164,7 +164,7 @@ def test_engine_etf_fills_are_indicative_fresh_and_risk_budgeted(tmp_path,monkey
     engine.quote_retry.clear()
     monkeypatch.setattr(stocks,'quote',lambda *a:{'price':100,'time':now-1000,'basis':'one-minute indicative fixture'})
     engine.entries(db,'SPY',asof)
-    row=next(r for r in db.trades() if not r['track'].endswith('[FLIP]'))
+    row=db.trades()[0]
     assert row['policy']==POLICY and row['source']=='paper' and row['symbol']=='SPY'
     assert row['quantity']*1.05==pytest.approx(25)
     assert 'indicative' in row['reason']
@@ -213,7 +213,7 @@ def test_model_gate_rechecks_observed_fill_not_old_signal_close(tmp_path,monkeyp
     signal=Signal('SMC EMA50','long',asof,100,99,102,'fixture',2)
     engine.pending[('BTC-USDT',asof)]={'signals':[signal],'entered':set()}
     db=Store(tmp_path/'db');engine.entries(db,'BTC-USDT',asof)
-    assert sorted(r['track'] for r in db.trades())==['SMC EMA50','SMC EMA50 [FLIP]']
+    assert sorted(r['track'] for r in db.trades())==['SMC EMA50 [FLIP]']
 
 
 def test_etf_model_variants_share_a_cached_indicative_quote(tmp_path,monkeypatch):
@@ -233,7 +233,7 @@ def test_etf_model_variants_share_a_cached_indicative_quote(tmp_path,monkeypatch
     signal=Signal('SMC EMA50','long',asof,100,99,102,'fixture',2)
     engine.pending[('SPY',asof)]={'signals':[signal],'entered':set()}
     db=Store(tmp_path/'db');engine.entries(db,'SPY',asof)
-    assert len(db.trades())==8
+    assert len(db.trades())==4
     assert len(calls)==1
 
 
