@@ -67,8 +67,10 @@ def test_all_open_positions_remain_visible_and_original_history_can_be_filtered(
  rows=[{'source':'paper','track':'SMC EMA50','symbol':'BTC-USDT','side':'long'},
        {'source':'paper','track':'SMC EMA50 [FLIP]','symbol':'BTC-USDT','side':'short'},
        {'source':'paper','track':'Fibonacci','symbol':'ETH-USDT','side':'short'},
-       {'source':'paper','track':'Fibonacci','symbol':'ETH-USDT','side':'long'}]
- assert [visible_active(r) for r in rows]==[False,True,True,False]
+       {'source':'paper','track':'Fibonacci','symbol':'ETH-USDT','side':'long'},
+       {'source':'paper','track':'Fibonacci [FLIP]','symbol':'ETH-USDT','side':'long'},
+       {'source':'paper','track':'Fibonacci [FLIP]','symbol':'ETH-USDT','side':'short'}]
+ assert [visible_active(r) for r in rows]==[False,True,True,False,False,True]
 
 
 def test_live_provider_report_keeps_failure_explicit(tmp_path,monkeypatch):

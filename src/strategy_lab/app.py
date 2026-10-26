@@ -526,7 +526,7 @@ class App(tk.Tk):
         self.open_count.set(f'{len(opened)} open position(s) — paper simulations / manually recorded fills')
         for row in opened:
             price=prices.get(row['symbol']);net=net_return(row,price) if price is not None else None
-            role='Manual journal' if row['source']=='manual' else 'Flip' if row['track'].endswith(SUFFIX) else 'ETH Fibonacci short exception' if keep_original(row['track'],row['symbol'],row['side']) else 'Earlier original (retained)'
+            role='Manual journal' if row['source']=='manual' else 'Earlier ETH short flip (retained)' if row['track']=='Fibonacci'+SUFFIX and row['symbol']=='ETH-USDT' and row['side']=='long' else 'Flip' if row['track'].endswith(SUFFIX) else 'ETH Fibonacci short exception' if keep_original(row['track'],row['symbol'],row['side']) else 'Earlier original (retained)'
             sized=row['source']=='manual' or row.get('policy')=='quality-v2'
             self.open_positions.insert('','end',iid=str(row['id']),values=(row['track'],row['symbol'],row['side'],f'{row["entry"]:.3f}',f'{price:.3f}' if price is not None else 'UNPRICED',f'{row["stop"]:.3f}',f'{row["target"]:.3f}',f'{row["remaining"]:.6f}',f'{net*100:+.3f}%' if net is not None else 'UNPRICED',money(net*100) if net is not None else 'UNPRICED',money(net*row['entry']*row['quantity'],2) if net is not None and sized else 'N/A normalized' if not sized else 'UNPRICED',role))
         for item in self.summary.get_children():self.summary.delete(item)
