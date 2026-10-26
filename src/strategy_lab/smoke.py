@@ -72,3 +72,69 @@ def desktop_smoke():
             try:app.shutdown()
             except Exception:pass
             raise
+
+
+def offline_model_smoke():
+    """Genuine local weights on explicitly synthetic inputs; zero market-data calls."""
+    import math
+    from .market import Candle
+    from .instruments import future_times
+    from datetime import datetime,timezone
+    models=Models();results={'input_basis':'SYNTHETIC FIXTURES ONLY; NOT LIVE DATA',
+                             'live_crypto_acceptance':'NOT TESTED by this offline check',
+                             'live_ETF_acceptance':'NOT TESTED by this offline check'}
+    crypto_start=int(datetime(2026,10,20,tzinfo=timezone.utc).timestamp()*1000)
+    etf_start=int(datetime(2026,11,27,14,30,tzinfo=timezone.utc).timestamp()*1000)
+    for symbol,start,base in [('BTC-USDT',crypto_start,80000),('SPY',etf_start,500)]:
+        times=[start]+future_times(symbol,start,95)
+        fixture=[]
+        for i,t in enumerate(times):
+            value=base*(1+.0002*i+.001*math.sin(i/5))
+            fixture.append(Candle(t,value,value*1.002,value*.998,value*1.0001,1000,1000*value))
+        results[symbol]={}
+        for name in ('Kronos','TimesFM'):
+            f=models.predict(name,fixture,symbol=symbol)
+            assert len(f['values'])==6 and len(f['target_times'])==6
+            results[symbol][name]=f
+    Path('offline-model-smoke.json').write_text(json.dumps(results,indent=2))
+    print(json.dumps(results))
+
+
+def offline_desktop_smoke():
+    """Installed GUI + real ledger/engine flip exits, synthetic prices, temporary DB only."""
+    import tempfile
+    import math
+    from .app import App
+    from .store import Store
+    from .market import Candle
+    with tempfile.TemporaryDirectory() as folder:
+        path=Path(folder)/'fixture-only.sqlite3';app=App(path,start=False)
+        from .strategies import Settings
+        app.engine.settings=Settings()
+        try:
+            t=1793000000000//300000*300000
+            original=app.store.open_trade('Fibonacci','BTC-USDT','long',t+1,100,99,102,'OFFLINE FIXTURE ONLY',quantity=2.5,cost_pct=.0015,policy='quality-v2',setup_key='fixture-only')
+            app.engine.open_flip(app.store,original,{'bid':99.9,'ask':100},t)
+            rows=app.store.trades();flip=next(r for r in rows if r['track'].endswith('[FLIP]'))
+            assert flip['opened']==t+1 and flip['quantity']==2.5 and flip['side']=='short'
+            assert math.isclose(abs(flip['stop']/flip['entry']-1),.01)
+            assert math.isclose(abs(flip['target']/flip['entry']-1),.02)
+            # Flip can stop out first while the original remains open.
+            app.engine.paper_exits(app.store,'BTC-USDT',Candle(t+300000,100,101.1,99.5,101,10,1000))
+            rows=app.store.trades();assert next(r for r in rows if r['id']==original)['closed'] is None
+            assert next(r for r in rows if r['id']==flip['id'])['closed'] is not None
+            app.engine.paper_exits(app.store,'BTC-USDT',Candle(t+600000,101,102.2,100.5,102,10,1000))
+            rows=app.store.trades();assert all(r['closed'] is not None for r in rows)
+            app.render_trades(rows);app.update()
+            assert app.trades.set(str(flip['id']),'track')=='Fibonacci [FLIP]'
+            assert any(app.summary.item(i,'values')[0]=='Fibonacci [FLIP]' for i in app.summary.get_children())
+            dialog=app.history_dialog();app.update();dialog.destroy()
+            result={'input_basis':'SYNTHETIC FIXTURE ONLY; NOT LIVE DATA','original_and_flip_recorded':True,
+                    'same_size_timestamp_costs_and_percentage_distances':True,'independent_engine_exits':True,
+                    'gui_flip_visible':True,'platform':__import__('platform').platform()}
+            app.shutdown();app=None
+            db=Store(path);saved=db.trades();assert len(saved)==2 and all(r['closed'] is not None for r in saved);db.close()
+            result['journal_survived_restart']=True
+            Path('offline-desktop-smoke.json').write_text(json.dumps(result,indent=2))
+        finally:
+            if app is not None:app.shutdown()

@@ -40,4 +40,15 @@ def run():
     print(json.dumps(result))
     return result
 
+def report_status(path='live-provider-status.json'):
+    import traceback
+    result={'status':'BLOCKED','basis':'REAL LIVE PROVIDER CHECK'}
+    try:
+        result['evidence']=run();result['status']='PASSED'
+    except Exception as exc:
+        result['error']=str(exc);result['traceback']=traceback.format_exc()
+    Path(path).write_text(json.dumps(result,indent=2))
+    print(json.dumps(result))
+    return result
+
 if __name__=='__main__':run()

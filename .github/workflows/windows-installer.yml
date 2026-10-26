@@ -37,9 +37,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Verify native Windows REST and WebSocket
-        timeout-minutes: 3
-        run: python -m strategy_lab.network_probe
       - name: Install bundled CPU runtime and build tools
         run: |
           python -m pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu
@@ -50,10 +47,10 @@ jobs:
           python -m strategy_lab --self-test
       - name: Prepare genuine checkpoints and source manifest
         run: python scripts/prepare_models.py
-      - name: Real market and genuine model smoke tests
+      - name: Genuine models and desktop integration on synthetic fixtures
         run: |
-          python -m strategy_lab --live-smoke
-          python -m strategy_lab --model-smoke
+          python -m strategy_lab --offline-model-smoke
+          python -m strategy_lab --offline-desktop-smoke
       - name: Compile complete bundled application
         run: >-
           python -m PyInstaller --noconfirm --clean --windowed --onedir
@@ -66,7 +63,7 @@ jobs:
         shell: pwsh
         run: |
           $env:HF_HUB_OFFLINE = '1'
-          foreach ($flag in @('--self-test', '--network-smoke', '--model-smoke', '--live-smoke')) {
+          foreach ($flag in @('--self-test', '--offline-model-smoke', '--offline-desktop-smoke')) {
             $process = Start-Process dist/BloFinObserver/BloFinObserver.exe -ArgumentList $flag -PassThru
             if (!$process.WaitForExit(180000)) { $process.Kill(); throw "Frozen test timed out: $flag" }
             if ($process.ExitCode -ne 0) { throw "Frozen test failed: $flag" }
@@ -92,7 +89,7 @@ jobs:
           $install = Join-Path $env:RUNNER_TEMP 'BloFinInstalled'
           $p = Start-Process installer-output/BloFinObserver-Setup.exe -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=$install") -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw 'Installation failed' }
-          foreach ($flag in @('--self-test', '--network-smoke', '--model-smoke', '--live-smoke', '--acceptance-smoke')) {
+          foreach ($flag in @('--self-test', '--offline-model-smoke', '--offline-desktop-smoke')) {
             $p = Start-Process "$install/BloFinObserver.exe" -ArgumentList $flag -PassThru
             if (!$p.WaitForExit(180000)) { $p.Kill(); throw "Installed test timed out: $flag" }
             if ($p.ExitCode -ne 0) { throw "Installed test failed: $flag" }
@@ -116,7 +113,7 @@ jobs:
           if ((Get-FileHash $model -Algorithm SHA256).Hash -ne $before) { throw 'Updater modified model weights' }
           if ((Get-FileHash $journal -Algorithm SHA256).Hash -ne $journalBefore) { throw 'Updater modified journal' }
           $env:HF_HUB_OFFLINE = '1'
-          foreach ($flag in @('--self-test','--network-smoke','--model-smoke','--acceptance-smoke')) {
+          foreach ($flag in @('--self-test','--offline-model-smoke','--offline-desktop-smoke')) {
             $p = Start-Process "$upgrade/BloFinObserver.exe" -ArgumentList $flag -PassThru
             if (!$p.WaitForExit(180000)) { $p.Kill(); throw "Upgraded test timed out: $flag" }
             if ($p.ExitCode -ne 0) { throw "Upgraded test failed: $flag" }
@@ -141,4 +138,30 @@ jobs:
         shell: pwsh
         run: |
           $tag = "observer-${{ github.run_number }}"
-          gh release create $tag installer-output/* --target '${{ github.sha }}' --prerelease --title "BloFin Observer build ${{ github.run_number }}" --notes 'Observer 0.3.2: paired direction-only [FLIP] paper comparison. Buy becomes short and sell becomes long, preserving original quantity, stop/target percentage distances and configured costs. Uses the opposite side of the same observed quote; does not swap stop/target distances or rerun model/OB gates for the flip. Original tracks and history retained. Prior 0.3.1 features: persistent entry outcomes and error history, bounded fresh-quote retry within the unchanged 90-second signal window, readable 12-hour decision history with Copy report. Historical missing outcomes remain unknown. Prior 0.3.0 features: dollar P/L per $100, independent experimental quality-v2 paper accounts and risk gates, SPY/QQQ data-key setup and session-aware integration. Crypto live data, models, installer and GUI checks passed on Windows Server 2022. ETF live-feed acceptance is BLOCKED pending a user-configured Twelve Data key/entitlement; synthetic ETF input tests only verify model/calendar plumbing. No profitability claim. Windows 11 interactive and annotated SMC acceptance remain outstanding.'
+          gh release create $tag installer-output/* --target '${{ github.sha }}' --prerelease --title "BloFin Observer build ${{ github.run_number }}" --notes 'Observer 0.3.2: paired direction-only [FLIP] paper comparison. Buy becomes short and sell becomes long, preserving original quantity, stop/target percentage distances and configured costs. Uses the opposite side of the same observed quote; does not swap stop/target distances or rerun model/OB gates for the flip. Original tracks and history retained. Prior 0.3.1 features: persistent entry outcomes and error history, bounded fresh-quote retry within the unchanged 90-second signal window, readable 12-hour decision history with Copy report. Historical missing outcomes remain unknown. Prior 0.3.0 features: dollar P/L per $100, independent experimental quality-v2 paper accounts and risk gates, SPY/QQQ data-key setup and session-aware integration. Windows Server 2022 unit, genuine offline-model, GUI, installed flip-ledger and updater-preservation checks passed using clearly labeled synthetic fixtures. Live crypto verification is separate in the Live-BloFin-Status artifact and can be blocked by the provider; no live-data pass is implied by this release. ETF live-feed acceptance is BLOCKED pending a user-configured Twelve Data key/entitlement; synthetic ETF input tests only verify model/calendar plumbing. No profitability claim. Windows 11 interactive and annotated SMC acceptance remain outstanding.'
+
+  live-provider-status:
+    needs: supersede
+    runs-on: windows-2022
+    timeout-minutes: 5
+    env:
+      PYTHONPATH: src
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Independent live BloFin verification
+        shell: pwsh
+        run: |
+          python -c "from strategy_lab.network_probe import report_status; report_status()"
+          if ($LASTEXITCODE -ne 0) { throw 'Live-status reporter failed' }
+          Get-Content live-provider-status.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Live-BloFin-Status
+          path: |
+            live-provider-status.json
+            network-smoke.json
+          if-no-files-found: error

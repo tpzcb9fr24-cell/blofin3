@@ -565,6 +565,12 @@ def main():
             app.shutdown()
             reopened=Store(Path(directory)/'test.db');assert len(reopened.trades())==3;reopened.close()
         return
+    if '--offline-model-smoke' in sys.argv:
+        from .smoke import offline_model_smoke
+        offline_model_smoke();return
+    if '--offline-desktop-smoke' in sys.argv:
+        from .smoke import offline_desktop_smoke
+        offline_desktop_smoke();return
     if '--acceptance-smoke' in sys.argv:
         from .smoke import desktop_smoke
         desktop_smoke();return

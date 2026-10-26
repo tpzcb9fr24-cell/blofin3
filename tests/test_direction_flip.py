@@ -50,3 +50,16 @@ def test_live_pair_copies_original_size_cost_time_and_audits_overlap(tmp_path):
  engine.open_flip(db,original,quote,1000)
  assert len(db.trades())==2
  assert db.db.execute("select state from entry_attempts where track like '%[FLIP]'").fetchone()[0]=='EXISTING_POSITION'
+
+
+def test_live_provider_report_keeps_failure_explicit(tmp_path,monkeypatch):
+    import json
+    import strategy_lab.network_probe as probe
+    def fail():raise AssertionError('fixture: unconfirmed historical candle')
+    monkeypatch.setattr(probe,'run',fail)
+    path=tmp_path/'status.json';result=probe.report_status(path)
+    assert result['status']=='BLOCKED'
+    assert 'unconfirmed historical candle' in result['error']
+    assert json.loads(path.read_text())['status']=='BLOCKED'
+    monkeypatch.setattr(probe,'run',lambda:{'fixture':'passed transport'})
+    assert probe.report_status(path)['status']=='PASSED'
