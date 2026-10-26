@@ -1,10 +1,18 @@
 # 0.3.3 flip-only routing and Open positions
 
-Windows installer verification pending.
+**0.3.3 Windows Server 2022 verification passed:** 82 tests, genuine offline Kronos/TimesFM inference, source/frozen/installed GUI, flip-only routing, the exact ETH Fibonacci short exception, open-position lifecycle, restart and updater journal/model preservation. The separate REAL BloFin REST/history/quote/WebSocket check also PASSED at build time. Offline tests use clearly synthetic fixtures in temporary databases; normal startup never uses those fixtures. Interactive Windows 11 and live ETF acceptance remain outstanding. No profitability claim.
+
+[Download 0.3.3 updater](https://github.com/tpzcb9fr24-cell/blofin3/releases/download/observer-11/BloFinObserver-Update.exe) | [Full installer](https://github.com/tpzcb9fr24-cell/blofin3/releases/download/observer-11/BloFinObserver-Setup.exe) | [Successful build](https://github.com/tpzcb9fr24-cell/blofin3/actions/runs/40321111160).
+
+[Installed/offline evidence](https://github.com/tpzcb9fr24-cell/blofin3/actions/runs/40321111160/artifacts/12648739375) | [Separate live status](https://github.com/tpzcb9fr24-cell/blofin3/actions/runs/40321111160/artifacts/12649605518).
+
+Updater SHA256: `582c28d863123f1a857cc122e36b1a36859297d64e69529601fb17b1243402cd`. Full installer SHA256: `0d259264145560ab678b72ece0a7e3d4a8d858f4a4b55c2f3f98302a0b48dc20`. Built source: `59e13f608d87cf162c56849b87e0feed499fb551`.
 
 New paper entries now execute only the direction-only flip, except the exact combination `ETH-USDT` + plain `Fibonacci` + original `short` signal, which remains an original short with original entry, stop and target. ETH Fibonacci longs and the Fibonacci+SMC+both track are not exceptions. Original model, signal, stop/target and cost gates still determine the candidate. Stop/target percentage distances and costs are preserved; the existing sizing formula runs against the routed strategy account. No paired originals or shadow ledger entries are created.
 
 The Open positions tab is selected on startup with the chart hidden for space. The OPEN POSITIONS button returns there. It lists all still-open paper/manual records across markets, including earlier original positions, with side, entry, current mark, stop, target, remaining units and P/L. Existing positions continue unchanged until exit. Journal/performance defaults hide earlier original history except the ETH short exception; Show earlier original history reveals it. Account balances use complete track history so they agree with risk budgeting. No old trades are deleted, rewritten or force-closed. No real exchange orders. No profitability claim.
+
+Previous version notes below are superseded by 0.3.3 for new entries.
 
 # 0.3.2 direction-only paper comparison
 
